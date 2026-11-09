@@ -1,0 +1,301 @@
+// src/barber/barber.controller.ts
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UploadedFiles,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { InjectRepository } from '@nestjs/typeorm';
+import { memoryStorage } from 'multer';
+import { isAllowedSlotIntervalMinutes } from 'src/booking/slot-intervals';
+import {
+  IMAGE_MAX_SIZE_BYTES,
+  MAX_BARBER_PORTFOLIO_IMAGES,
+} from 'src/common/constants/constants';
+import { AuthGuard } from 'src/common/guards/auth.guard';
+import {
+  normalizeNumberValue,
+  toEnglishDigits,
+} from 'src/common/utils/digits.util';
+import { FilesService } from 'src/files/files.service';
+import { Repository } from 'typeorm';
+
+import { BarberService } from './barber.service';
+import { BarberQueryDto } from './dto/barber-query.dto';
+import { UpdateBarberDto } from './dto/update-barber.dto';
+import { BarberProfile } from './entities/barber.entity';
+import { WorkHoursService } from './work-hours.service';
+
+@Controller('barber')
+export class BarberController {
+  constructor(
+    private readonly barberService: BarberService,
+    private readonly filesService: FilesService,
+    private readonly workHoursService: WorkHoursService,
+    @InjectRepository(BarberProfile)
+    private barberProfileRepo: Repository<BarberProfile>,
+  ) {}
+
+  @Get('public-directory')
+  getPublicDirectory() {
+    return this.barberService.getPublicDirectory();
+  }
+
+  @Get('public/cities/:slug')
+  getPublicCity(@Param('slug') slug: string) {
+    return this.barberService.findPublicCityBySlug(slug);
+  }
+
+  // ---- مسیرهای عمومی ----
+  @Get()
+  findAll(
+    @Req() req: any,
+    @Query() query: BarberQueryDto,
+    @Query('cityId') cityId?: number | string,
+    @Query('provinceId') provinceId?: number | string,
+    @Query('minPrice') minPrice?: number | string,
+    @Query('maxPrice') maxPrice?: number | string,
+    @Query('minRating') minRating?: number | string,
+    @Query('gender') gender?: string,
+  ) {
+    const parseOptNum = (val?: number | string): number | undefined => {
+      if (val === undefined || val === '') return undefined;
+      const parsed = normalizeNumberValue(val);
+      return typeof parsed === 'number' && Number.isFinite(parsed)
+        ? parsed
+        : undefined;
+    };
+
+    return this.barberService.findAll(query, {
+      cityId: parseOptNum(cityId) ?? query.cityId ?? undefined,
+      provinceId: parseOptNum(provinceId) ?? query.provinceId ?? undefined,
+      minPrice: parseOptNum(minPrice) ?? query.minPrice ?? undefined,
+      maxPrice: parseOptNum(maxPrice) ?? query.maxPrice ?? undefined,
+      minRating: parseOptNum(minRating) ?? query.minRating ?? undefined,
+      // در endpoint عمومی، req.user الزاماً توسط AuthGuard پر نمی‌شود؛ صفحات
+      // داخل پنل جنسیت جاری را صریح می‌فرستند تا فیلتر برای آن‌ها اعمال شود.
+      gender: req.user?.gender ?? gender ?? null,
+    });
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    const numericId = Number(toEnglishDigits(id));
+    if (!Number.isInteger(numericId) || numericId < 1) {
+      throw new NotFoundException('آرایشگاه یافت نشد');
+    }
+    return this.barberService.findPublicOne(numericId);
+  }
+
+  // ---- مسیرهای مربوط به پروفایل کاربر جاری ----
+  @Get('profile/me')
+  @UseGuards(AuthGuard)
+  getMyProfile(@Req() req: any) {
+    const user = req.user;
+    return this.barberService.findOneByUserId(user.id);
+  }
+
+  @Patch('profile/me')
+  @UseGuards(AuthGuard)
+  updateMyProfile(@Req() req: any, @Body() dto: UpdateBarberDto) {
+    const user = req.user;
+    return this.barberService.update(user.id, dto);
+  }
+
+  @Post('profile/image')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: IMAGE_MAX_SIZE_BYTES },
+    }),
+  )
+  async uploadProfileImage(
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const user = req.user;
+    if (!file) {
+      throw new BadRequestException('فایل تصویر ارسال نشده است');
+    }
+
+    // ذخیره فایل در پوشه profiles
+    const imagePath = await this.filesService.saveFile(file, 'profiles');
+
+    // به‌روزرسانی پروفایل کاربر
+    const updatedProfile = await this.barberService.update(user.id, {
+      profileImage: imagePath,
+    });
+
+    return {
+      imageUrl: imagePath,
+      pendingStatus: updatedProfile.pendingStatus,
+    };
+  }
+
+  @Patch('profile/portfolio')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(
+    FilesInterceptor('portfolio', MAX_BARBER_PORTFOLIO_IMAGES, {
+      storage: memoryStorage(),
+      limits: {
+        fileSize: IMAGE_MAX_SIZE_BYTES,
+        files: MAX_BARBER_PORTFOLIO_IMAGES,
+      },
+    }),
+  )
+  async updatePortfolioImages(
+    @Req() req: any,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+    @Body('existingImages') existingImagesJson: string,
+  ) {
+    const user = req.user;
+    const profile = await this.barberProfileRepo.findOne({
+      where: { userId: user.id },
+    });
+    if (!profile) {
+      throw new NotFoundException('پروفایل آرایشگر یافت نشد');
+    }
+
+    if (typeof existingImagesJson !== 'string') {
+      throw new BadRequestException('فهرست عکس‌های حفظ‌شده نامعتبر است');
+    }
+
+    let existingImages: unknown;
+    try {
+      existingImages = JSON.parse(existingImagesJson);
+    } catch {
+      throw new BadRequestException('فهرست عکس‌های حفظ‌شده نامعتبر است');
+    }
+
+    if (
+      !Array.isArray(existingImages) ||
+      existingImages.some(image => typeof image !== 'string')
+    ) {
+      throw new BadRequestException('فهرست عکس‌های حفظ‌شده نامعتبر است');
+    }
+
+    const liveImages = profile.portfolioImages ?? [];
+    const draftImages = profile.pendingChanges?.portfolioImages ?? [];
+    const allowedImages = new Set([...liveImages, ...draftImages]);
+    const keptImages = existingImages as string[];
+    const uploadedFiles = files ?? [];
+
+    if (
+      new Set(keptImages).size !== keptImages.length ||
+      keptImages.some(image => !allowedImages.has(image))
+    ) {
+      throw new BadRequestException(
+        'نمی‌توان عکس‌های متعلق به پروفایل دیگر را نگه داشت',
+      );
+    }
+
+    if (
+      keptImages.length + uploadedFiles.length >
+      MAX_BARBER_PORTFOLIO_IMAGES
+    ) {
+      throw new BadRequestException(
+        `حداکثر ${MAX_BARBER_PORTFOLIO_IMAGES} نمونه‌کار مجاز است`,
+      );
+    }
+
+    const uploadedPaths: string[] = [];
+
+    try {
+      for (const file of uploadedFiles) {
+        uploadedPaths.push(await this.filesService.saveFile(file, 'portfolio'));
+      }
+
+      const nextImages = [...keptImages, ...uploadedPaths];
+      const updatedProfile = await this.barberService.updatePortfolioImages(
+        user.id,
+        nextImages,
+      );
+
+      return {
+        message: 'نمونه‌کارها با موفقیت به‌روزرسانی شدند',
+        data: updatedProfile,
+      };
+    } catch (error) {
+      this.filesService.deleteFiles(uploadedPaths);
+      throw error;
+    }
+  }
+
+  @Post('profile/work-hours')
+  @UseGuards(AuthGuard)
+  async setWorkHours(
+    @Req() req: any,
+    @Body()
+    dto: {
+      hours: { dayOfWeek: number; startTime: string; endTime: string }[];
+      slotIntervalMinutes?: number;
+    },
+  ) {
+    const user = req.user;
+
+    // پیدا کردن پروفایل آرایشگر بر اساس userId
+    const profile = await this.barberProfileRepo.findOne({
+      where: { userId: user.id },
+    });
+    if (!profile) {
+      throw new NotFoundException('پروفایل آرایشگر یافت نشد');
+    }
+
+    if (!dto.hours || !Array.isArray(dto.hours)) {
+      throw new BadRequestException('فیلد hours باید یک آرایه باشد');
+    }
+
+    if (dto.slotIntervalMinutes !== undefined) {
+      const interval = Number(dto.slotIntervalMinutes);
+      if (!isAllowedSlotIntervalMinutes(interval)) {
+        throw new BadRequestException(
+          'بازه زمانی رزرو باید یکی از مقادیر ۱۵، ۳۰، ۴۵ یا ۶۰ دقیقه باشد',
+        );
+      }
+      profile.slotIntervalMinutes = interval;
+      await this.barberProfileRepo.save(profile);
+    }
+
+    // ارسال profile.id (UUID) به سرویس
+    return this.workHoursService.setWorkHours(profile.id, dto.hours);
+  }
+
+  @Get('profile/work-hours')
+  @UseGuards(AuthGuard)
+  async getWorkHours(@Req() req: any) {
+    const user = req.user;
+
+    const profile = await this.barberProfileRepo.findOne({
+      where: { userId: user.id },
+    });
+    if (!profile) {
+      throw new NotFoundException('پروفایل آرایشگر یافت نشد');
+    }
+
+    return this.workHoursService.getWorkHours(profile.id);
+  }
+
+  // دریافت کد معرف کاربر
+  @Get('profile/referral-code')
+  @UseGuards(AuthGuard)
+  async getMyReferralCode(@Req() req: any) {
+    const user = req.user;
+    const referralInfo = await this.barberService.getReferralInfo(user.id);
+    return {
+      message: 'کد معرف با موفقیت دریافت شد',
+      data: referralInfo,
+    };
+  }
+}

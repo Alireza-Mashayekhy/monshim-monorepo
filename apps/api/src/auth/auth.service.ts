@@ -1,0 +1,544 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
+import { Response } from 'express';
+import { BaleNotificationService } from 'src/bale/bale-notification.service';
+import { BarberService } from 'src/barber/barber.service';
+import {
+  ACCESS_TOKEN_EXPIRES_IN,
+  getAccessTokenSecret,
+  getRefreshTokenSecret,
+  REFRESH_TOKEN_EXPIRES_IN,
+} from 'src/common/config/jwt.config';
+import { Role } from 'src/common/enum/role.enum';
+import {
+  clearAuthCookies,
+  setAuthCookies,
+} from 'src/common/utils/auth-cookie.util';
+import { isDuplicateEntryError } from 'src/common/utils/db-error.util';
+import {
+  isValidIranianNationalCode,
+  normalizeNationalCode,
+  toEnglishDigits,
+} from 'src/common/utils/national-code.util';
+import { normalizeRoles } from 'src/common/utils/roles.util';
+import { BookingSmsService } from 'src/notification/booking-sms.service';
+import { OtpService } from 'src/otp/otp.service';
+import {
+  isSessionId,
+  SessionRevocationService,
+} from 'src/redis/session-revocation.service';
+import { ReferralService } from 'src/referral/referral.service';
+import { ServicesService } from 'src/services/services.service';
+import { CreateUserDto } from 'src/users/dto/create-user.dto';
+import { User } from 'src/users/entities/user.entity';
+import { UsersService } from 'src/users/users.service';
+import { DataSource } from 'typeorm';
+
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { LoginWithPasswordDto } from './dto/login-with-password.dto';
+import { RegisterBarberDto } from './dto/register-barber.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { SendVerifyOtp } from './dto/verify-otp.dto';
+
+const INVALID_REFRESH_TOKEN_MESSAGE = 'توکن تازه‌سازی نامعتبر است';
+const EXPIRED_SESSION_MESSAGE =
+  'نشست شما منقضی شده است. لطفاً دوباره وارد شوید';
+const PHONE_ALREADY_REGISTERED_MESSAGE = 'این شماره تلفن قبلاً ثبت شده است';
+
+@Injectable()
+export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly usersService: UsersService,
+    private readonly otpService: OtpService,
+    private readonly barberProfileService: BarberService,
+    private readonly servicesService: ServicesService,
+    private readonly referralService: ReferralService,
+    private readonly dataSource: DataSource,
+    private readonly sessionRevocations: SessionRevocationService,
+    @Optional()
+    private readonly baleNotificationService?: BaleNotificationService,
+    @Optional()
+    private readonly bookingSmsService?: BookingSmsService,
+  ) {}
+
+  async getProfile(userId: number) {
+    const user = await this.usersService.findOne(userId);
+    if (!user) {
+      throw new NotFoundException('کاربر یافت نشد');
+    }
+    return user;
+  }
+
+  async sendCode(sendOtpDto: SendOtpDto) {
+    const user = await this.usersService.findWithPhone(sendOtpDto.phone);
+
+    const response = await this.otpService.sendOtp(sendOtpDto.phone);
+
+    const { message, ...payload } = response;
+
+    return {
+      message,
+      data: {
+        ...payload,
+        newUser: !user,
+      },
+    };
+  }
+
+  async verifyCode(sendVerifyOtp: SendVerifyOtp) {
+    await this.otpService.verifyOtp(
+      sendVerifyOtp.phone,
+      sendVerifyOtp.code,
+      false,
+    );
+
+    const user = await this.usersService.findWithPhone(sendVerifyOtp.phone);
+
+    if (user && !user.isActive) {
+      throw new ForbiddenException(
+        'حساب کاربری شما غیرفعال است. با پشتیبانی تماس بگیرید',
+      );
+    }
+
+    return {
+      message: 'کد تأیید معتبر است',
+      data: { valid: true, newUser: !user },
+    };
+  }
+
+  async login(sendVerifyOtp: SendVerifyOtp, response: Response) {
+    await this.otpService.verifyOtp(sendVerifyOtp.phone, sendVerifyOtp.code);
+
+    const user = await this.usersService.findWithPhone(sendVerifyOtp.phone);
+
+    if (!user) {
+      return {
+        message:
+          'این شماره هنوز ثبت‌نام نشده است. لطفاً برای تکمیل ثبت‌نام نام و تاریخ تولد را وارد کنید',
+        data: { newUser: true, phone: sendVerifyOtp.phone },
+      };
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException(
+        'حساب کاربری شما غیرفعال است. با پشتیبانی تماس بگیرید',
+      );
+    }
+
+    await this.issueTokens(user, response);
+
+    return { message: 'ورود با موفقیت انجام شد', data: { newUser: false } };
+  }
+
+  async requestChangePasswordOtp(userId: number) {
+    const user = await this.usersService.findOne(userId);
+    if (!user || !user.phone) {
+      throw new NotFoundException('کاربر یافت نشد');
+    }
+    // ارسال کد OTP به شمارهٔ خود کاربر
+    return this.otpService.sendOtp(user.phone);
+  }
+
+  async changePassword(userId: number, dto: ChangePasswordDto) {
+    const user = await this.usersService.findOne(userId);
+    if (!user || !user.phone) {
+      throw new NotFoundException('کاربر یافت نشد');
+    }
+
+    // تأیید کد OTP (مثل لاگین) - کد مصرف می‌شود
+    await this.otpService.verifyOtp(user.phone, dto.code);
+
+    const hashed = await bcrypt.hash(dto.newPassword, 10);
+    await this.usersService.updatePassword(userId, hashed);
+
+    return { message: 'رمز عبور با موفقیت تغییر کرد' };
+  }
+
+  async loginWithPassword(dto: LoginWithPasswordDto, response: Response) {
+    const user = await this.usersService.findWithPhoneWithPassword(dto.phone);
+
+    if (!user || !user.password) {
+      throw new UnauthorizedException('شماره تلفن یا رمز عبور اشتباه است');
+    }
+
+    const isMatch = await bcrypt.compare(dto.password, user.password);
+    if (!isMatch) {
+      throw new UnauthorizedException('شماره تلفن یا رمز عبور اشتباه است');
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException(
+        'حساب کاربری شما غیرفعال است. با پشتیبانی تماس بگیرید',
+      );
+    }
+
+    await this.issueTokens(user, response);
+
+    return { message: 'ورود با موفقیت انجام شد', data: { newUser: false } };
+  }
+
+  async registerBarber(dto: RegisterBarberDto, response: Response) {
+    const existingUser = await this.usersService.findWithPhone(dto.phone);
+    if (existingUser) {
+      throw new ConflictException(PHONE_ALREADY_REGISTERED_MESSAGE);
+    }
+
+    if (dto.nationalCode?.trim()) {
+      const cleanNc = normalizeNationalCode(dto.nationalCode);
+      if (!isValidIranianNationalCode(cleanNc)) {
+        throw new BadRequestException('کد ملی وارد شده معتبر نیست');
+      }
+      const existingNc = await this.usersService.findWithNationalCode(cleanNc);
+      if (existingNc) {
+        throw new ConflictException('این کد ملی قبلاً در سامانه ثبت شده است');
+      }
+    }
+
+    let referredByUserId: number | null = null;
+    if (dto.referralCode?.trim()) {
+      const referrerProfile =
+        await this.barberProfileService.findByReferralCode(
+          toEnglishDigits(dto.referralCode.trim()).toUpperCase(),
+        );
+
+      if (!referrerProfile) {
+        throw new BadRequestException('کد معرف وارد شده معتبر نیست');
+      }
+
+      referredByUserId = referrerProfile.userId;
+    }
+
+    // ۳. تأیید کد یکبارمصرف
+    await this.otpService.verifyOtp(dto.phone, dto.code);
+
+    // ۴. ایجاد کاربر، پروفایل، خدمات و رکورد دعوت به صورت تراکنشی
+    let user: User;
+    try {
+      user = await this.dataSource.transaction(async manager => {
+        const createdUser = await this.usersService.createWithRoles(
+          {
+            fullName: dto.fullName,
+            phone: dto.phone,
+            nationalCode: dto.nationalCode
+              ? normalizeNationalCode(dto.nationalCode)
+              : null,
+            isActive: true,
+            birthDate: dto.birthDate,
+          },
+          [Role.User, Role.Barber],
+          manager,
+        );
+
+        await this.barberProfileService.create(
+          {
+            userId: createdUser.id,
+            salonName: dto.salonName,
+            activityType: dto.activityType,
+            provinceId: dto.provinceId,
+            cityId: dto.cityId,
+            address: dto.address,
+            profileImage: dto.profileImage,
+            portfolioImages: dto.portfolioImages || [],
+            isApproved: false,
+            bio: '',
+            referredBy: referredByUserId ?? undefined,
+          },
+          manager,
+        );
+
+        if (dto.services && dto.services.length > 0) {
+          for (const svc of dto.services) {
+            await this.servicesService.create(
+              {
+                name: svc.name,
+                price: svc.price,
+                depositPrice: svc.depositPrice,
+                durationMinutes: svc.durationMinutes,
+                barberId: createdUser.id,
+                isActive: true,
+              },
+              manager,
+            );
+          }
+        }
+
+        if (referredByUserId) {
+          await this.referralService.createReferral(
+            referredByUserId,
+            createdUser.id,
+            manager,
+          );
+        }
+
+        return createdUser;
+      });
+    } catch (error) {
+      if (isDuplicateEntryError(error)) {
+        throw new ConflictException(PHONE_ALREADY_REGISTERED_MESSAGE);
+      }
+
+      this.logger.error(`registerBarber failed: ${String(error)}`);
+      throw error;
+    }
+
+    // ۵. ارسال اعلان ثبت‌نام آرایشگر جدید به ربات بله (جهت بررسی و تایید ادمین)
+    void this.baleNotificationService?.notifyBarberRegistered?.(user.id);
+
+    // ۵.۱. اگر دعوت‌کننده پیش از این دعوت یکی از دو شرط پاداش (۳۰ رزرو موفق
+    // یا خرید صفحهٔ اختصاصی) را محقق کرده باشد، پاداش همان‌جا ارزیابی و
+    // واریز می‌شود. عمداً await نمی‌شود تا پاسخ ثبت‌نام گره نخورد و خطای آن
+    // فقط لاگ شود.
+    if (referredByUserId) {
+      void this.referralService
+        .onReferralCreated?.(referredByUserId)
+        ?.catch?.(() => undefined);
+    }
+
+    // ۵.۲. پیامک «پروفایل شما در حال بررسی است» (قالب 573804) به خود آرایشگر.
+    // عمداً await نمی‌شود (پاسخ ثبت‌نام نباید به زمان پاسخ سرویس پیامک گره
+    // بخورد) و خطای آن هم فقط لاگ می‌شود تا ثبت‌نام هرگز به‌خاطر پیامک
+    // شکست نخورد یا unhandled rejection ایجاد نکند.
+    this.sendProfileSubmittedSms(user);
+
+    // ۶. صدور توکن
+    await this.issueTokens(user, response);
+
+    return {
+      message:
+        'ثبت‌نام آرایشگر با موفقیت انجام شد. پس از تأیید ادمین، حساب شما فعال می‌شود.',
+    };
+  }
+
+  async signUp(createUserDto: CreateUserDto, response: Response) {
+    await this.otpService.verifyOtp(createUserDto.phone, createUserDto.code);
+
+    const existingUser = await this.usersService.findWithPhone(
+      createUserDto.phone,
+    );
+
+    if (existingUser) {
+      throw new ConflictException(PHONE_ALREADY_REGISTERED_MESSAGE);
+    }
+
+    const payload = { ...createUserDto };
+
+    if (createUserDto.nationalCode?.trim()) {
+      const cleanNc = normalizeNationalCode(createUserDto.nationalCode);
+      if (!isValidIranianNationalCode(cleanNc)) {
+        throw new BadRequestException('کد ملی وارد شده معتبر نیست');
+      }
+      const existingNc = await this.usersService.findWithNationalCode(cleanNc);
+      if (existingNc) {
+        throw new ConflictException('این کد ملی قبلاً در سامانه ثبت شده است');
+      }
+      payload.nationalCode = cleanNc;
+    }
+
+    if (payload.password) {
+      payload.password = await bcrypt.hash(payload.password, 10);
+    }
+
+    let newUser: User;
+    try {
+      newUser = await this.usersService.create(payload);
+    } catch (error) {
+      if (isDuplicateEntryError(error)) {
+        throw new ConflictException(PHONE_ALREADY_REGISTERED_MESSAGE);
+      }
+      throw error;
+    }
+
+    if (!newUser.isActive) {
+      throw new ForbiddenException(
+        'حساب کاربری شما غیرفعال است. با پشتیبانی تماس بگیرید',
+      );
+    }
+
+    await this.issueTokens(newUser, response);
+
+    return { message: 'ثبت‌نام با موفقیت انجام شد' };
+  }
+
+  // Failed refreshes must not send clearing Set-Cookie headers: a delayed
+  // response could otherwise erase a newer login in another tab. Invalid tokens
+  // are still rejected; explicit logout is responsible for clearing cookies.
+  async refresh(refreshToken: string | undefined, response: Response) {
+    if (!refreshToken) {
+      throw new UnauthorizedException('توکن تازه‌سازی ارسال نشده است');
+    }
+
+    // A missing server secret is a configuration failure, not an invalid user
+    // session. Let it propagate as a 500 so the browser can retry later.
+    const refreshSecret = getRefreshTokenSecret();
+    let payload: { sub?: number | string; sid?: unknown };
+    try {
+      payload = await this.jwtService.verifyAsync(refreshToken, {
+        secret: refreshSecret,
+      });
+    } catch (error) {
+      this.logger.debug(`refresh token rejected: ${String(error)}`);
+
+      const isExpired =
+        (error as { name?: string })?.name === 'TokenExpiredError';
+      throw new UnauthorizedException(
+        isExpired ? EXPIRED_SESSION_MESSAGE : INVALID_REFRESH_TOKEN_MESSAGE,
+      );
+    }
+
+    const userId = Number(payload?.sub);
+
+    if (
+      !Number.isInteger(userId) ||
+      userId <= 0 ||
+      (payload.sid !== undefined && !isSessionId(payload.sid))
+    ) {
+      throw new UnauthorizedException(INVALID_REFRESH_TOKEN_MESSAGE);
+    }
+
+    // Tokens issued before session IDs were introduced remain valid for their
+    // existing lifetime and are upgraded on successful refresh.
+    const sessionId = isSessionId(payload.sid) ? payload.sid : undefined;
+    const revoked = sessionId
+      ? await this.sessionRevocations.isSessionRevoked(sessionId)
+      : await this.sessionRevocations.isLegacyTokenRevoked(refreshToken);
+    if (revoked) throw new UnauthorizedException(EXPIRED_SESSION_MESSAGE);
+
+    const user = await this.usersService.findOne(userId);
+
+    if (!user) {
+      throw new UnauthorizedException('کاربر یافت نشد');
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException(
+        'حساب کاربری شما غیرفعال است. با پشتیبانی تماس بگیرید',
+      );
+    }
+
+    await this.issueTokens(user, response, sessionId);
+
+    return { message: 'نشست شما با موفقیت تازه‌سازی شد' };
+  }
+
+  async logout(
+    refreshToken: string | undefined,
+    response: Response,
+    accessToken?: string,
+  ) {
+    let sessionRevoked = false;
+    if (refreshToken) {
+      const secret = getRefreshTokenSecret();
+      let payload: { sid?: unknown } | undefined;
+      try {
+        // A prior token for the same sliding session may have expired while a
+        // newer one is still valid. Verify its signature before revoking the ID.
+        payload = await this.jwtService.verifyAsync(refreshToken, {
+          secret,
+          ignoreExpiration: true,
+        });
+      } catch {
+        // An invalid token cannot identify a session, but cookies can be cleared.
+      }
+      if (payload) {
+        if (isSessionId(payload.sid)) {
+          await this.sessionRevocations.revokeSession(payload.sid);
+          sessionRevoked = true;
+        } else if (payload.sid === undefined) {
+          await this.sessionRevocations.revokeLegacyToken(refreshToken);
+        }
+      }
+    }
+
+    // If the refresh cookie is missing/invalid, a signed access token can still
+    // identify and revoke the session (including Bearer-token clients).
+    if (!sessionRevoked && accessToken) {
+      const secret = getAccessTokenSecret();
+      let payload: { sid?: unknown; id?: unknown } | undefined;
+      try {
+        payload = await this.jwtService.verifyAsync(accessToken, {
+          secret,
+          ignoreExpiration: true,
+        });
+      } catch {
+        // An invalid access token cannot identify a session either.
+      }
+      if (payload && Number(payload.id) > 0 && isSessionId(payload.sid)) {
+        await this.sessionRevocations.revokeSession(payload.sid);
+      }
+    }
+
+    clearAuthCookies(response);
+    return { message: 'خروج با موفقیت انجام شد' };
+  }
+
+  /**
+   * پیامک «اطلاعات سالن شما در دست بررسی است» (قالب 573804) — fire-and-forget.
+   * هر خطایی فقط لاگ می‌شود.
+   */
+  private sendProfileSubmittedSms(user: User) {
+    void Promise.resolve(
+      this.bookingSmsService?.sendBarberProfileSubmittedToBarber?.(user.phone, {
+        barberName: user.fullName,
+      }),
+    ).catch(error => {
+      this.logger.warn(
+        `ارسال پیامک «پروفایل در حال بررسی» برای کاربر ${user.id} ناموفق بود: ${String(error)}`,
+      );
+    });
+  }
+
+  private async issueTokens(
+    user: User,
+    response: Response,
+    sessionId: string = randomUUID(),
+  ) {
+    const accessToken = await this.generateAccessToken(user, sessionId);
+    const refreshToken = await this.generateRefreshToken(user, sessionId);
+
+    setAuthCookies(response, accessToken, refreshToken);
+  }
+
+  private async generateAccessToken(user: User, sessionId: string) {
+    return this.jwtService.signAsync(
+      {
+        id: user.id,
+        sid: sessionId,
+        fullName: user.fullName,
+        phone: user.phone,
+        email: user.email,
+        roles: normalizeRoles(user.roles),
+        isActive: user.isActive,
+        provinceId: user.provinceId,
+        cityId: user.cityId,
+      },
+      {
+        secret: getAccessTokenSecret(),
+        expiresIn: ACCESS_TOKEN_EXPIRES_IN,
+      },
+    );
+  }
+
+  private async generateRefreshToken(user: User, sessionId: string) {
+    return this.jwtService.signAsync(
+      { sub: user.id, sid: sessionId },
+      {
+        secret: getRefreshTokenSecret(),
+        expiresIn: REFRESH_TOKEN_EXPIRES_IN,
+      },
+    );
+  }
+}

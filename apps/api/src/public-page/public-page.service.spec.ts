@@ -1,0 +1,574 @@
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { ACTIVE_BOOKING_STATUSES } from 'src/booking/entities/booking.entity';
+import {
+  PaymentPurpose,
+  PaymentStatus,
+} from 'src/payment/entities/payment.entity';
+import { TransactionType } from 'src/wallet/entities/transaction.entity';
+import { IsNull } from 'typeorm';
+
+import { PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS } from './constants';
+import {
+  PUBLIC_PAGE_SLUG_LOCKED_MESSAGE,
+  PublicPageService,
+} from './public-page.service';
+import { normalizePublicPageSlug, validatePublicPageSlug } from './slug.util';
+
+describe('PublicPage slug utility', () => {
+  it('نرمال‌سازی حروف بزرگ و ارقام فارسی/عربی را انجام می‌دهد', () => {
+    expect(normalizePublicPageSlug('  Aria-Salon-۱۲۳  ')).toBe(
+      'aria-salon-123',
+    );
+    expect(normalizePublicPageSlug('Salon-٤٥')).toBe('salon-45');
+  });
+
+  it('اسلاگ‌های معتبر انگلیسی را می‌پذیرد و موارد نامعتبر را رد می‌کند', () => {
+    expect(validatePublicPageSlug('aria-vip-24')).toEqual({
+      valid: true,
+      slug: 'aria-vip-24',
+    });
+
+    // فقط عدد نباید پذیرفته شود (جلوگیری از تداخل با user.id)
+    expect(validatePublicPageSlug('12345').valid).toBe(false);
+
+    // کوتاه‌تر از ۳ کاراکتر
+    expect(validatePublicPageSlug('ab').valid).toBe(false);
+
+    // خط تیره در ابتدا/انتها یا دو خط تیره متوالی
+    expect(validatePublicPageSlug('-aria').valid).toBe(false);
+    expect(validatePublicPageSlug('aria-').valid).toBe(false);
+    expect(validatePublicPageSlug('aria--salon').valid).toBe(false);
+
+    // حروف غیرانگلیسی و کاراکترهای غیرمجاز
+    expect(validatePublicPageSlug('سالن-آریا').valid).toBe(false);
+    expect(validatePublicPageSlug('aria_salon').valid).toBe(false);
+
+    // کلمات رزروشده
+    expect(validatePublicPageSlug('admin').valid).toBe(false);
+    expect(validatePublicPageSlug('directory').valid).toBe(false);
+  });
+});
+
+describe('PublicPageService', () => {
+  it('کد تخفیف را بدون حساسیت به بزرگی حروف اعمال و مبلغ را محاسبه می‌کند', async () => {
+    const { service } = createService({
+      discount: { code: 'SAVE25', percentOff: 25, isActive: true },
+    });
+
+    await expect(service.getDiscountQuote(' save25 ')).resolves.toEqual({
+      code: 'SAVE25',
+      percentOff: 25,
+      originalAmount: 773_000,
+      discountAmount: 193_250,
+      amount: 579_750,
+    });
+  });
+
+  it('برای کاربری که واقعاً با کد معرف ثبت‌نام کرده، تخفیف ۵۰٪ خودکار می‌دهد', async () => {
+    const { service } = createService({ hasReferral: true });
+
+    await expect(service.getReferralDiscountQuote(20)).resolves.toEqual({
+      code: null,
+      percentOff: 50,
+      originalAmount: 773_000,
+      discountAmount: 386_500,
+      amount: 386_500,
+    });
+  });
+
+  it('کد تخفیف صددرصدی خرید را رایگان می‌کند و کد نامعتبر رد می‌شود', async () => {
+    const { service } = createService({
+      discount: { code: 'FREE100', percentOff: 100, isActive: true },
+    });
+    await expect(service.getDiscountQuote('FREE100')).resolves.toMatchObject({
+      amount: 0,
+      discountAmount: 773_000,
+    });
+
+    const { service: withoutDiscount } = createService();
+    await expect(withoutDiscount.getDiscountQuote('MISSING')).rejects.toThrow(
+      'کد تخفیف نامعتبر یا غیرفعال است',
+    );
+  });
+
+  function createMockBookingQb(options?: { count?: number; rawRows?: any[] }) {
+    const subQb: any = {
+      select: jest.fn().mockReturnThis(),
+      from: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getQuery: jest
+        .fn()
+        .mockReturnValue(
+          '(SELECT 1 FROM payments gatewayPayment WHERE gatewayPayment.status = :paidPaymentStatus)',
+        ),
+    };
+
+    const qb: any = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      having: jest.fn().mockReturnThis(),
+      subQuery: jest.fn(() => subQb),
+      getCount: jest.fn().mockResolvedValue(options?.count ?? 0),
+      getRawMany: jest.fn().mockResolvedValue(options?.rawRows ?? []),
+      __subQb: subQb,
+    };
+
+    return qb;
+  }
+
+  function createService(params?: {
+    profile?: any;
+    profiles?: any[];
+    existingSlugOwner?: any;
+    purchase?: any;
+    paidBookingsCount?: number;
+    qualifiedRows?: any[];
+    purchaseDirectoryRows?: any[];
+    duplicateDbError?: boolean;
+    updateAffected?: number;
+    discount?: any;
+    hasReferral?: boolean;
+  }) {
+    const bookingQb = createMockBookingQb({
+      count: params?.paidBookingsCount ?? 0,
+      rawRows: params?.qualifiedRows ?? [],
+    });
+
+    const purchaseQb: any = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      getRawMany: jest
+        .fn()
+        .mockResolvedValue(params?.purchaseDirectoryRows ?? []),
+    };
+
+    const purchaseRepo: any = {
+      findOne: jest.fn().mockResolvedValue(params?.purchase ?? null),
+      createQueryBuilder: jest.fn(() => purchaseQb),
+      create: jest.fn(x => x),
+      save: jest.fn(x => Promise.resolve(x)),
+    };
+
+    const profileRepo: any = {
+      findOne: jest.fn(({ where }: any) => {
+        if (where?.userId !== undefined) {
+          return Promise.resolve(params?.profile ?? null);
+        }
+        if (where?.slug !== undefined) {
+          if (params?.existingSlugOwner !== undefined) {
+            return Promise.resolve(params.existingSlugOwner);
+          }
+          if (params?.profile && params.profile.slug === where.slug) {
+            return Promise.resolve(params.profile);
+          }
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(null);
+      }),
+      find: jest.fn().mockResolvedValue(params?.profiles ?? []),
+      update: jest.fn(() => {
+        if (params?.duplicateDbError) {
+          const err = Object.assign(new Error('Duplicate entry'), {
+            driverError: { code: 'ER_DUP_ENTRY', errno: 1062 },
+          });
+          return Promise.reject(err);
+        }
+        return Promise.resolve({ affected: params?.updateAffected ?? 1 });
+      }),
+    };
+
+    const bookingRepo: any = {
+      createQueryBuilder: jest.fn(() => bookingQb),
+    };
+
+    const barberService: any = {
+      findPublicOne: jest.fn((userId: number) =>
+        Promise.resolve({
+          id: userId,
+          salonName: 'سالن آریا',
+          services: [
+            { id: 's-1', name: 'اصلاح', price: 200000, durationMinutes: 30 },
+          ],
+        }),
+      ),
+      getPublicDirectory: jest.fn(() =>
+        Promise.resolve({
+          barbers: (params?.profiles ?? []).map(p => ({ id: p.userId })),
+          cities: [],
+        }),
+      ),
+    };
+
+    const configService: any = {
+      get: jest.fn((key: string) =>
+        key === 'FRONT_URL' ? 'https://monshiim.ir' : undefined,
+      ),
+    };
+
+    const discountRepo: any = {
+      findOne: jest.fn().mockResolvedValue(params?.discount ?? null),
+    };
+    const referralRepo: any = {
+      count: jest.fn().mockResolvedValue(params?.hasReferral ? 1 : 0),
+    };
+    const service = new PublicPageService(
+      purchaseRepo,
+      discountRepo,
+      profileRepo,
+      bookingRepo,
+      referralRepo,
+      barberService,
+      configService,
+    );
+
+    return {
+      service,
+      bookingQb,
+      profileRepo,
+      purchaseRepo,
+      barberService,
+    };
+  }
+
+  it('فقط رزروهای غیروضعیتِ لغو/رد و دارای پرداخت موفقِ برگشت‌نخوردهٔ درگاه را می‌شمارد (هم‌راستا با امور مالی)', async () => {
+    const { service, bookingQb } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      paidBookingsCount: 15,
+    });
+
+    const status = await service.getStatusByUserId(42);
+    expect(status.packagePriceTomans).toBe(773_000);
+    expect(status.paidBookingsCount).toBe(15);
+    expect(status.isActive).toBe(false);
+    expect(status.publicUrl).toBeNull();
+
+    // ۱) حذف رزروهای لغوشده و ردشده
+    expect(bookingQb.andWhere).toHaveBeenCalledWith(
+      'booking.status IN (:...activeBookingStatuses)',
+      { activeBookingStatuses: ACTIVE_BOOKING_STATUSES },
+    );
+
+    // ۲) بررسی وجود رکورد پرداخت موفق درگاه و برگشت‌نخورده (مشابه امور مالی)
+    const existsCall = bookingQb.andWhere.mock.calls.find(
+      ([sql]: [unknown]) =>
+        typeof sql === 'string' && sql.startsWith('EXISTS '),
+    );
+    expect(existsCall).toBeTruthy();
+    expect(existsCall[1]).toEqual(
+      expect.objectContaining({
+        bookingPaymentPurpose: PaymentPurpose.BOOKING,
+        paidPaymentStatus: PaymentStatus.PAID,
+        refundTxType: TransactionType.REFUND,
+      }),
+    );
+
+    const subQb = bookingQb.__subQb;
+    const notRefundedSubCall = subQb.andWhere.mock.calls.find(
+      ([sql]: [unknown]) =>
+        typeof sql === 'string' && sql.includes('SELECT refund_tx.referenceId'),
+    );
+    expect(notRefundedSubCall).toBeTruthy();
+  });
+
+  it('وقتی صفحه فعال است اما هنوز اسلاگ ثبت نشده، آیدی را در publicUrl نشان نمی‌دهد', async () => {
+    const { service } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      paidBookingsCount: PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS,
+    });
+
+    const status = await service.getStatusByUserId(42);
+    expect(status.isActive).toBe(true);
+    expect(status.reason).toBe('PAID_BOOKINGS');
+    expect(status.slug).toBeNull();
+    expect(status.publicUrl).toBeNull();
+  });
+
+  it('اجازهٔ ثبت اسلاگ قبل از فعال شدن صفحهٔ اختصاصی را نمی‌دهد', async () => {
+    const { service } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      paidBookingsCount: 10,
+    });
+
+    await expect(
+      service.updateSlugByUserId(42, 'aria-salon'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('اسلاگ تکراری را رد می‌کند و اسلاگ یکتا را ذخیره و در لینک عمومی قرار می‌دهد', async () => {
+    const { service: dupService } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      existingSlugOwner: { id: 'prof-other', userId: 99 },
+      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+    });
+
+    const availability = await dupService.checkSlugAvailability(
+      42,
+      'aria-salon',
+    );
+    expect(availability.valid).toBe(true);
+    expect(availability.available).toBe(false);
+
+    await expect(
+      dupService.updateSlugByUserId(42, 'aria-salon'),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    const { service: okService, profileRepo } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+    });
+
+    const updated = await okService.updateSlugByUserId(42, '  Aria-Salon  ');
+    // شرط `slug: IsNull()` نوشتن یک‌باره را تضمین می‌کند.
+    expect(profileRepo.update).toHaveBeenCalledWith(
+      { id: 'prof-1', slug: IsNull() },
+      { slug: 'aria-salon' },
+    );
+    expect(updated.slug).toBe('aria-salon');
+    expect(updated.isSlugLocked).toBe(true);
+    expect(updated.publicUrl).toBe('https://monshiim.ir/barber/aria-salon');
+  });
+
+  it('پس از ثبت، تغییر اسلاگ را رد می‌کند (اسلاگ یک‌باره و غیرقابل برگشت است)', async () => {
+    const { service, profileRepo } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+    });
+
+    await expect(
+      service.updateSlugByUserId(42, 'aria-salon-2'),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    await expect(
+      service.updateSlugByUserId(42, 'aria-salon-2'),
+    ).rejects.toMatchObject({ message: PUBLIC_PAGE_SLUG_LOCKED_MESSAGE });
+
+    expect(profileRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('ارسال دوبارهٔ همان اسلاگ، عملیات بی‌اثر (idempotent) است', async () => {
+    const { service, profileRepo } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+    });
+
+    const status = await service.updateSlugByUserId(42, ' Aria-Salon ');
+    expect(status.slug).toBe('aria-salon');
+    expect(status.isSlugLocked).toBe(true);
+    expect(profileRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('اگر نوشتن هم‌زمان اسلاگ شکست بخورد (affected=0) خطای Conflict می‌دهد', async () => {
+    const { service } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      updateAffected: 0,
+    });
+
+    await expect(
+      service.updateSlugByUserId(42, 'aria-salon'),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('برای آرایشگر دارای اسلاگ، بررسی اسلاگ دیگر پیام «قفل» برمی‌گرداند', async () => {
+    const { service } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+    });
+
+    const availability = await service.checkSlugAvailability(
+      42,
+      'another-salon',
+    );
+    expect(availability.available).toBe(false);
+    expect(availability.reason).toBe(PUBLIC_PAGE_SLUG_LOCKED_MESSAGE);
+  });
+
+  it('در خطای هم‌زمانی یکتایی دیتابیس (ER_DUP_ENTRY) خطای Conflict برمی‌گرداند', async () => {
+    const { service } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      purchase: { id: 'pur-1', createdAt: new Date() },
+      duplicateDbError: true,
+    });
+
+    await expect(
+      service.updateSlugByUserId(42, 'aria-salon'),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('نمایش غیرفعال را مستقل از پکیج و اسلاگ حفظ می‌کند', async () => {
+    const { service, profileRepo } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        isPubliclyVisible: false,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+    });
+    const status = await service.getStatusByUserId(42);
+    expect(status).toMatchObject({
+      isActive: true,
+      isApproved: true,
+      isPubliclyVisible: false,
+      slug: 'aria-salon',
+      publicUrl: 'https://monshiim.ir/barber/aria-salon',
+    });
+    expect(profileRepo.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ isPubliclyVisible: true }),
+      }),
+    );
+  });
+
+  it('صفحه و نقشهٔ سایت به فیلتر نمایش BarberService وابسته‌اند', async () => {
+    const { service, barberService, profileRepo } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        isPubliclyVisible: false,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      profiles: [{ id: 'prof-1', userId: 42, slug: 'aria-salon' }],
+      purchase: { id: 'pur-1', createdAt: new Date() },
+    });
+    barberService.findPublicOne.mockRejectedValue(new NotFoundException());
+    barberService.getPublicDirectory.mockResolvedValue({
+      barbers: [],
+      cities: [],
+    });
+    await expect(
+      service.getPublicBarberPage('aria-salon'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.getActiveDirectory()).resolves.toEqual([]);
+    expect(profileRepo.find).not.toHaveBeenCalled();
+  });
+
+  it('صفحهٔ عمومی را با اسلاگ باز می‌کند و بدون اسلاگ ۴۰۴ برمی‌گرداند', async () => {
+    const { service: withoutSlug } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: null,
+      },
+      purchase: { id: 'pur-1', createdAt: new Date() },
+    });
+
+    await expect(withoutSlug.getPublicBarberPage('42')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+
+    const { service: withSlug } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      purchase: { id: 'pur-1', createdAt: new Date() },
+    });
+
+    const page = await withSlug.getPublicBarberPage('aria-salon');
+    expect(page.slug).toBe('aria-salon');
+    expect(page.publicPage.url).toBe('https://monshiim.ir/barber/aria-salon');
+  });
+
+  it('در دایرکتوری sitemap فقط آرایشگرهای فعالِ دارای اسلاگ را قرار می‌دهد', async () => {
+    const { service } = createService({
+      profiles: [
+        { id: 'prof-1', userId: 10, slug: 'aria-salon' },
+        { id: 'prof-2', userId: 20, slug: null },
+      ],
+      purchaseDirectoryRows: [
+        { barberProfileId: 'prof-1', updatedAt: '2026-02-01T00:00:00.000Z' },
+        { barberProfileId: 'prof-2', updatedAt: '2026-02-01T00:00:00.000Z' },
+      ],
+    });
+
+    const directory = await service.getActiveDirectory();
+    expect(directory).toEqual([
+      {
+        id: 10,
+        slug: 'aria-salon',
+        updatedAt: '2026-02-01T00:00:00.000Z',
+      },
+    ]);
+  });
+});

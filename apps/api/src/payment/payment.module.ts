@@ -1,0 +1,60 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { BarberProfile } from 'src/barber/entities/barber.entity';
+import { BarberWorkHours } from 'src/barber/entities/barber-work-hours.entity';
+import { Booking } from 'src/booking/entities/booking.entity';
+import { SlotHold } from 'src/booking/entities/slot-hold.entity';
+import { NotificationModule } from 'src/notification/notification.module';
+import { PublicPageModule } from 'src/public-page/public-page.module';
+import { ReferralModule } from 'src/referral/referral.module';
+import { Service } from 'src/services/entities/service.entity';
+import { SiteSettings } from 'src/settings/entities/setting.entity';
+import { SubscriptionPlan } from 'src/subscription/entities/subscription-plan.entity';
+import { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
+import { User } from 'src/users/entities/user.entity';
+import { BankCard } from 'src/wallet/entities/bank-card.entity';
+import { Transaction } from 'src/wallet/entities/transaction.entity';
+import { WalletModule } from 'src/wallet/wallet.module';
+
+import { AdminTransactionsController } from './admin-transactions.controller';
+import { AdminTransactionsService } from './admin-transactions.service';
+import { AdminWithdrawalsController } from './admin-withdrawals.controller';
+import { AdminWithdrawalsService } from './admin-withdrawals.service';
+import { Payment } from './entities/payment.entity';
+import { PaymentController } from './payment.controller';
+import { PaymentService } from './payment.service';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([
+      Payment,
+      User,
+      BarberProfile,
+      BarberWorkHours,
+      SubscriptionPlan,
+      UserSubscription,
+      Service,
+      Booking,
+      SiteSettings,
+      Transaction,
+      BankCard,
+      SlotHold,
+    ]),
+    NotificationModule,
+    WalletModule,
+    PublicPageModule,
+    ReferralModule,
+  ],
+  controllers: [
+    PaymentController,
+    AdminTransactionsController,
+    AdminWithdrawalsController,
+  ],
+  providers: [
+    PaymentService,
+    AdminTransactionsService,
+    AdminWithdrawalsService,
+  ],
+  exports: [PaymentService],
+})
+export class PaymentModule {}
