@@ -31,7 +31,7 @@ jobs:
 
       # ⚠️ باید با "packageManager" در package.json ریشه یکی باشد (pnpm@9.15.9).
       # لاک‌فایل workspace نسخهٔ v9 است و pnpm 8 نمی‌تواند بخواندش.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.9
 
@@ -65,7 +65,7 @@ jobs:
         with:
           node-version: '22'
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.9
 
@@ -101,7 +101,7 @@ jobs:
         with:
           node-version: '22'
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.9
 
