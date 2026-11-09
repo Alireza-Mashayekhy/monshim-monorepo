@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `pnpm doctor` — چرا پروژه بالا نمی‌آید؟
+ * `pnpm doctor:env` — چرا پروژه بالا نمی‌آید؟
  *
  * این اسکریپت هیچ چیزی را عوض نمی‌کند؛ فقط چیزهایی را که «سکوت» می‌کنند
  * بررسی و گزارش می‌کند:
@@ -133,7 +133,7 @@ async function main() {
   apiEnvExists ? ok('apps/api/.env') : bad('apps/api/.env نیست');
   webEnvExists ? ok('apps/web/.env.local') : bad('apps/web/.env.local نیست');
   if (!apiEnvExists || !webEnvExists) {
-    warn('`pnpm setup` را اجرا کنید تا هر دو فایل ساخته شوند.');
+    warn('`pnpm setup:env` را اجرا کنید تا هر دو فایل ساخته شوند.');
   }
 
   const apiEnv = parseEnv(API_ENV_FILE);
@@ -149,7 +149,7 @@ async function main() {
 
     if (!apiEnv.JWT_ACCESS_SECRET || !apiEnv.JWT_REFRESH_SECRET) {
       bad('JWT_ACCESS_SECRET / JWT_REFRESH_SECRET خالی است');
-      warn('`pnpm setup --force` سکرت تصادفی می‌سازد.');
+      warn('`pnpm setup:env --force` سکرت تصادفی می‌سازد.');
     } else if (apiEnv.JWT_ACCESS_SECRET === apiEnv.JWT_REFRESH_SECRET) {
       note('JWT_ACCESS_SECRET و JWT_REFRESH_SECRET یکسان‌اند (باید متفاوت باشند)');
     } else {
@@ -231,7 +231,9 @@ async function main() {
   for (const [index, problem] of problems.entries()) {
     console.log(`  ${index + 1}. ${problem}`);
   }
-  console.log('');
+  console.log(
+    '\n(خروج با کد ۱ یعنی «این موارد را رفع کنید»؛ خودِ اسکریپت سالم است.)\n',
+  );
   process.exit(1);
 }
 

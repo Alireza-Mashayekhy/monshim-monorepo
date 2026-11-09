@@ -8,8 +8,8 @@
     "pnpm": ">=9"
   },
   "scripts": {
-    "setup": "node scripts/setup-env.mjs",
-    "doctor": "node scripts/doctor.mjs",
+    "setup:env": "node scripts/setup-env.mjs",
+    "doctor:env": "node scripts/doctor.mjs",
     "dev": "turbo run dev",
     "dev:api": "pnpm --filter @monshim/api dev",
     "dev:web": "pnpm --filter @monshim/web dev",

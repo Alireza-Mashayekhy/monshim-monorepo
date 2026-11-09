@@ -33,7 +33,7 @@
 ```bash
 # از ریشهٔ مخزن
 pnpm install
-pnpm setup      # ساخت apps/api/.env با مقادیر توسعه (PORT=4000)
+pnpm setup:env      # ساخت apps/api/.env با مقادیر توسعه (PORT=4000)
 pnpm db:up      # MySQL روی 3307 + Redis روی 6381
 pnpm dev        # بک‌اند روی 4000 (watch) + فرانت روی 3000
 ```
@@ -49,14 +49,14 @@ pnpm dev        # بک‌اند روی 4000 (watch) + فرانت روی 3000
 
 ### Scripts
 
-| دستور | کار |
-| --- | --- |
-| `pnpm dev` (ریشه) یا `pnpm --filter @monshim/api dev` | `nest start --watch` |
-| `pnpm --filter @monshim/api start:dev` | همان، با `--poll` (برای bind mount/Docker) |
-| `pnpm --filter @monshim/api build` | `nest build` → `dist/src/main.js` |
-| `pnpm --filter @monshim/api start:prod` | `node dist/src/main` (بعد از build) |
-| `pnpm --filter @monshim/api seed` | درج استان/شهرها (`seed.ts`) |
-| `pnpm --filter @monshim/api test` | Jest — بدون نیاز به MySQL/Redis |
+| دستور                                                 | کار                                        |
+| ----------------------------------------------------- | ------------------------------------------ |
+| `pnpm dev` (ریشه) یا `pnpm --filter @monshim/api dev` | `nest start --watch`                       |
+| `pnpm --filter @monshim/api start:dev`                | همان، با `--poll` (برای bind mount/Docker) |
+| `pnpm --filter @monshim/api build`                    | `nest build` → `dist/src/main.js`          |
+| `pnpm --filter @monshim/api start:prod`               | `node dist/src/main` (بعد از build)        |
+| `pnpm --filter @monshim/api seed`                     | درج استان/شهرها (`seed.ts`)                |
+| `pnpm --filter @monshim/api test`                     | Jest — بدون نیاز به MySQL/Redis            |
 
 > تست e2e این اپ در ساختار فعلی وجود ندارد (پوشهٔ `test/` نیست)؛ اسکریپت
 > `test:e2e` هم به همین دلیل حذف شد. تست‌های HTTP در `src/**/*http.spec.ts`
@@ -67,9 +67,9 @@ pnpm dev        # بک‌اند روی 4000 (watch) + فرانت روی 3000
 The payment flow builds two public URLs. Both must be **origins only** — no
 path, no trailing slash (the code strips them, but keep `.env` clean):
 
-| Variable       | What it is used for                                              | Production example      |
-| -------------- | ---------------------------------------------------------------- | ----------------------- |
-| `APP_URL`      | `.../api/payment/callback` given to the Zibal gateway             | `https://monshiim.ir`   |
+| Variable       | What it is used for                                                   | Production example    |
+| -------------- | --------------------------------------------------------------------- | --------------------- |
+| `APP_URL`      | `.../api/payment/callback` given to the Zibal gateway                 | `https://monshiim.ir` |
 | `FRONTEND_URL` | Where the user is redirected after paying (`/panel/payment/callback`) | `https://monshiim.ir` |
 
 Wrong values produce broken redirects:

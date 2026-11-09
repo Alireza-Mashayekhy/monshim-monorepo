@@ -15,8 +15,8 @@
  * این اسکریپت همان دو فایل را با مقادیر **درستِ توسعه** می‌سازد و
  * سکرت‌های تصادفی تولید می‌کند. روی فایل‌های موجود دست نمی‌گذارد.
  *
- *   pnpm setup           # فقط اگر فایل نباشد می‌سازد
- *   pnpm setup --force   # بازنویسی
+ *   pnpm setup:env           # فقط اگر فایل نباشد می‌سازد
+ *   pnpm setup:env --force   # بازنویسی
  */
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -33,7 +33,7 @@ const secret = () => randomBytes(48).toString('hex');
 const REVALIDATE_SECRET = secret();
 
 const API_TEMPLATE = `# ============================================================================
-# env توسعهٔ محلی بک‌اند — ساخته‌شده با \`pnpm setup\`
+# env توسعهٔ محلی بک‌اند — ساخته‌شده با \`pnpm setup:env\`
 # ============================================================================
 # این فایل در گیت نیست (در .gitignore هست) و برای اجرای لوکال است.
 # برای production از apps/api/.env.example استفاده کنید (PORT=3000، NODE_ENV=production).
@@ -97,7 +97,7 @@ UPLOAD_DIR=
 `;
 
 const WEB_TEMPLATE = `# ============================================================================
-# env توسعهٔ محلی فرانت — ساخته‌شده با \`pnpm setup\`
+# env توسعهٔ محلی فرانت — ساخته‌شده با \`pnpm setup:env\`
 # ============================================================================
 # Next این فایل را خودکار می‌خواند. در گیت نیست.
 # الگوی production: apps/web/.env.example
@@ -129,7 +129,7 @@ function writeEnv(file, template, label) {
   const relative = path.relative(ROOT, file);
 
   if (exists && !FORCE) {
-    console.log(`• ${relative} از قبل هست — دست نخورد (برای بازنویسی: pnpm setup --force)`);
+    console.log(`• ${relative} از قبل هست — دست نخورد (برای بازنویسی: pnpm setup:env --force)`);
 
     const content = readFileSync(file, 'utf8');
     if (/^\s*NODE_ENV\s*=\s*production\s*$/m.test(content)) {
@@ -169,5 +169,5 @@ console.log(
   'قدم‌های بعدی:\n' +
     '  1) pnpm db:up      # MySQL روی 3307 و Redis روی 6381 (Docker لازم است)\n' +
     '  2) pnpm dev        # بک‌اند روی 4000، فرانت روی 3000\n' +
-    '  3) pnpm doctor     # اگر چیزی بالا نیامد، اول این را اجرا کنید\n',
+    '  3) pnpm doctor:env     # اگر چیزی بالا نیامد، اول این را اجرا کنید\n',
 );
