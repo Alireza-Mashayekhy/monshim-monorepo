@@ -156,7 +156,7 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
     if (isSchemaNotReadyError(exception)) {
       this.logger.error(
         `database schema is not ready (a required table/column is missing — ` +
-          `run the files in back/sql or let the schema guard create them): ${String(exception)}`,
+          `run the files in apps/api/sql or let the schema guard create them): ${String(exception)}`,
       );
     } else if (getDriverError(exception)) {
       this.logger.error(`database error: ${String(exception)}`);

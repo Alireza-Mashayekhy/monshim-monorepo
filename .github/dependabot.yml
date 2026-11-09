@@ -1,41 +1,29 @@
 version: 2
 
 # به‌روزرسانی خودکار وابستگی‌ها.
-# هر PR فقط یک گروه را عوض می‌کند تا اگر چیزی شکست، مقصر مشخص باشد.
+#
+# ⚠️ از زمان monorepo شدن، **یک** لاک‌فایل (pnpm-lock.yaml) در ریشه وجود دارد و
+# پوشه‌های `back/` و `front/` دیگر نیستند. اگر یک ورودی برای هر پوشه بگذارید
+# (مثل نسخهٔ قبلی این فایل)، Dependabot هیچ‌وقت PR نمی‌سازد چون آن مسیرها
+# وجود ندارند. برای workspace، یک ورودی روی ریشه کافی است؛ Dependabot خودش
+# وابستگی‌های `apps/*` و `packages/*` را هم می‌بیند.
 updates:
   - package-ecosystem: npm
-    directory: /back
+    directory: /
     schedule:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
     versioning-strategy: increase
     commit-message:
-      prefix: 'deps(back)'
+      prefix: 'deps'
     groups:
       # patch/minor با هم، تا تعداد PR کم شود
-      back-minor-patch:
+      workspace-minor-patch:
         applies-to: version-updates
         update-types: [minor, patch]
     ignore:
       # ارتقای major باید دستی و با آزمون انجام شود، نه خودکار
-      - dependency-name: '*'
-        update-types: [version-update:semver-major]
-
-  - package-ecosystem: npm
-    directory: /front
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    versioning-strategy: increase
-    commit-message:
-      prefix: 'deps(front)'
-    groups:
-      front-minor-patch:
-        applies-to: version-updates
-        update-types: [minor, patch]
-    ignore:
       - dependency-name: '*'
         update-types: [version-update:semver-major]
 

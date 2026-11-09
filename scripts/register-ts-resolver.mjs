@@ -2,7 +2,7 @@
  * ثبتِ هوک حل مسیر برای **مولدهای بردار**.
  *
  * چرا لازم است؟
- * `shared/generate-text-vectors.mjs` فایل‌های TypeScript بک‌اند را مستقیم
+ * `scripts/generate-text-vectors.mjs` فایل‌های TypeScript بک‌اند را مستقیم
  * `import` می‌کند (`apps/api/src/common/utils/digits.util.ts`). Node این فایل‌ها
  * را می‌فهمد، اما importهای **بدون پسوند** داخل خودشان را نه:
  *
@@ -15,12 +15,12 @@
  * می‌شود و هیچ اثری روی کد Production، باندل Next یا بیلد Nest ندارد.
  *
  * استفاده:
- *   node --import ./shared/register-ts-resolver.mjs shared/generate-text-vectors.mjs
+ *   node --import ./scripts/register-ts-resolver.mjs scripts/generate-text-vectors.mjs
  */
 import { register } from 'node:module';
 import path from 'node:path';
 
-/** ریشهٔ مخزن — برای اینکه importهای نسبی داخل back/src درست حل شوند. */
+/** ریشهٔ مخزن — برای اینکه importهای نسبی داخل apps/api/src درست حل شوند. */
 export const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
 register(

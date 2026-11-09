@@ -10,7 +10,7 @@ import { COMMON_PLAN_FEATURES, formatToman, PRICING_PLANS } from './plans-data';
 
 /**
  * کارت‌های پلن‌های اشتراک منشیم.
- * قیمت‌ها و سهمیه پیامک عیناً از back/src/subscription/constants.ts.
+ * قیمت‌ها و سهمیه پیامک عیناً از apps/api/src/subscription/constants.ts.
  */
 export default function PricingPlans() {
   return (

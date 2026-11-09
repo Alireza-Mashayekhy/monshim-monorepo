@@ -1,17 +1,44 @@
+# =============================================================================
+# ایمیج **توسعه** بک‌اند (اختیاری) — برای وقتی که نمی‌خواهید Node را روی هاست
+# نصب کنید. مسیر پیشنهادی همان اجرای روی هاست است: `pnpm dev`.
+# =============================================================================
+# ⚠️ build context باید ریشهٔ مخزن باشد (مثل Dockerfile محصول)، چون نصب از
+#    workspace و لاک‌فایل ریشه انجام می‌شود و دپندنسی‌های `workspace:*` باید
+#    قبل از `pnpm install` در context باشند.
+#
+#   # از ریشهٔ مخزن:
+#   docker build -f apps/api/Dockerfile.dev -t monshim-api-dev .
+#   docker run --rm --env-file apps/api/.env \
+#     --network host \
+#     -v "$PWD/apps/api/src:/app/apps/api/src" \
+#     monshim-api-dev
+#
+#   نکته: فقط `src` مانت می‌شود؛ اگر کل `apps/api` را مانت کنید،
+#   `node_modules`ِ داخل ایمیج پشت پوشهٔ خالیِ هاست پنهان می‌شود و
+#   `nest: not found` می‌گیرید.
+# =============================================================================
 FROM node:22-alpine
 
-WORKDIR /backend
+WORKDIR /app
 
-RUN corepack disable
+RUN corepack disable && npm install -g pnpm@9.15.9
 
-RUN npm install -g pnpm@8.15.4
-
-COPY package.json pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json turbo.json ./
+COPY apps/api/package.json ./apps/api/
+COPY packages/tsconfig/package.json ./packages/tsconfig/
+COPY packages/eslint-config/package.json ./packages/eslint-config/
 
 RUN pnpm install --frozen-lockfile
 
-COPY . .
+COPY packages/tsconfig ./packages/tsconfig
+COPY packages/eslint-config ./packages/eslint-config
+COPY apps/api ./apps/api
 
-EXPOSE 3000
+WORKDIR /app/apps/api
 
-CMD ["pnpm", "start:dev"]
+# بک‌اند در توسعه روی ۴۰۰۰ اجرا می‌شود (فرانت انتظار همین را دارد)؛
+# در production همان ۳۰۰۰ است.
+ENV PORT=4000
+EXPOSE 4000
+
+CMD ["pnpm", "dev"]

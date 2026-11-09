@@ -15,7 +15,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** ریشهٔ پروژهٔ فرانت (`front/`) — همان‌جایی که `paths: { "@/*": ["./*"] }` به آن اشاره دارد. */
+/** ریشهٔ پروژهٔ فرانت (`apps/web/`) — همان‌جایی که `paths: { "@/*": ["./*"] }` به آن اشاره دارد. */
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 
 /** پسوندهایی که به ترتیب امتحان می‌شوند (دقیقاً مثل رفتار `moduleResolution: bundler`). */

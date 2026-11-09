@@ -13,7 +13,7 @@ import { toPersianDigits as toPersianDigitsFromUtils } from './utils.ts';
 /**
  * «قفل همسانی» منطق متن فارسی — سمت فرانت.
  *
- * همین بردارها در `back/src/common/utils/text-parity.spec.ts` هم اجرا می‌شوند.
+ * همین بردارها در `apps/api/src/common/utils/text-parity.spec.ts` هم اجرا می‌شوند.
  *
  * چرا اهمیت دارد: اگر فرم فرانت کد ملی‌ای را «معتبر» بداند که سرور رد می‌کند
  * (یا برعکس)، کاربر پیام خطای متناقض می‌بیند. همین برای ارقام فارسی.

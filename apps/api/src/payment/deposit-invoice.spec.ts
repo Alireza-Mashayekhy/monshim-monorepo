@@ -5,6 +5,35 @@ jest.mock('@nestjs/schedule', () => ({
   CronExpression: { EVERY_10_MINUTES: '0 */10 * * * *' },
 }));
 
+/**
+ * تست هرگز نباید به اینترنت برود.
+ *
+ * چرا این mock لازم شد؟
+ * دو تستِ این فایل مسیر «درگاه در دسترس نیست → شبیه‌سازی با ZIBAL_MOCK» را
+ * می‌سنجند، ولی بدون mock رفتارشان به شبکهٔ ماشین وابسته بود:
+ *   • ماشینِ بدون دسترسی به gateway.zibal.ir → خطای شبکه → مسیر mock → سبز
+ *   • runner با اینترنت (CI یا لپ‌تاپ) → زیبال با «merchant یافت نشد»
+ *     (result=105) پاسخ می‌دهد → BadRequestException → همان دو تست قرمز
+ * این دقیقاً روی GitHub Actions اتفاق افتاد، در حالی که اجرای لوکال سبز بود.
+ *
+ * حالا هر دو فراخوانی (`/v1/request` و `/v1/verify`) به‌صورت قطعی خطای شبکه
+ * می‌دهند؛ نتیجه دیگر به اینترنت ماشین وابسته نیست.
+ */
+const postMock = jest.fn();
+
+jest.mock('axios', () => {
+  const actual = jest.requireActual('axios');
+
+  return {
+    __esModule: true,
+    ...actual,
+    default: {
+      ...actual.default,
+      post: (...args: unknown[]) => postMock(...args),
+    },
+  };
+});
+
 import { Booking, BookingStatus } from 'src/booking/entities/booking.entity';
 import { SiteSettings } from 'src/settings/entities/setting.entity';
 
@@ -13,6 +42,17 @@ import { PaymentService } from './payment.service';
 
 describe('PaymentService deposit invoice & gateway payment flow', () => {
   const BASE_TOKEN = 'ABCDEFGH12345678abcdefgh';
+
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockImplementation(async () => {
+      const error = new Error(
+        'getaddrinfo ENOTFOUND gateway.zibal.ir',
+      ) as Error & { code?: string };
+      error.code = 'ENOTFOUND';
+      throw error;
+    });
+  });
 
   function makeBookingsFixture(): Booking[] {
     const requestedAt = new Date(Date.now() - 30 * 60 * 1000);
