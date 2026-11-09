@@ -1,7 +1,7 @@
 /**
  * پلن‌های اشتراک منشیم — دقیقاً هماهنگ با منبع حقیقت پروژه:
- * back/src/subscription/constants.ts (قیمت و تعداد پیامک) و
- * front/constants/subscription-plans.ts (نام و توضیح پلن‌ها).
+ * apps/api/src/subscription/constants.ts (قیمت و تعداد پیامک) و
+ * apps/web/constants/subscription-plans.ts (نام و توضیح پلن‌ها).
  * تفاوت پلن‌ها فقط در تعداد پیامک ماهانه است؛ همه امکانات در همه پلن‌ها فعال است.
  */
 export interface PricingPlan {
@@ -9,7 +9,7 @@ export interface PricingPlan {
   name: string;
   /** توضیح کوتاه پلن — عیناً از constants/subscription-plans.ts */
   description: string;
-  /** قیمت ماهانه به تومان — عیناً از back/src/subscription/constants.ts */
+  /** قیمت ماهانه به تومان — عیناً از apps/api/src/subscription/constants.ts */
   monthlyPrice: number;
   /** سهمیه پیامک ماهانه پلن */
   smsCount: number;

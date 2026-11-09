@@ -1,5 +1,5 @@
 /**
- * خواندن بردارهای آزمون از `shared/` — مقاوم به جابه‌جایی ساختار.
+ * خواندن بردارهای آزمون از `packages/contracts/vectors` — مقاوم به جابه‌جایی ساختار.
  *
  * چرا نسخهٔ قبلی می‌شکست؟
  *   const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');

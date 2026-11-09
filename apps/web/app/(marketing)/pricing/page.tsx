@@ -26,7 +26,7 @@ export const metadata: Metadata = buildPageMetadata({
 
 /**
  * داده ساخت‌یافته صفحه تعرفه — قیمت‌ها عیناً از
- * back/src/subscription/constants.ts (تومان × ۱۰ = ریال).
+ * apps/api/src/subscription/constants.ts (تومان × ۱۰ = ریال).
  */
 const planPricesInRial = PRICING_PLANS.map(plan => plan.monthlyPrice * 10);
 

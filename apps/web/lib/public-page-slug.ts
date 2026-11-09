@@ -1,6 +1,6 @@
 /**
  * نرمال‌سازی و اعتبارسنجی اسلاگ «صفحهٔ اختصاصی آرایشگاه» (`/provider/[slug]`).
- * هم‌راستا با قواعد بک‌اند (`back/src/public-page/slug.util.ts`).
+ * هم‌راستا با قواعد بک‌اند (`apps/api/src/public-page/slug.util.ts`).
  */
 
 export const MIN_PUBLIC_PAGE_SLUG_LENGTH = 3;

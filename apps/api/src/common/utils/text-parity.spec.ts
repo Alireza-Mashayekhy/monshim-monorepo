@@ -9,7 +9,7 @@ import { readSharedJson } from './repo-root.util';
 /**
  * «قفل همسانی» منطق متن فارسی — سمت بک‌اند.
  *
- * همین بردارها در `front/lib/text-parity.test.ts` هم اجرا می‌شوند.
+ * همین بردارها در `apps/web/lib/text-parity.test.ts` هم اجرا می‌شوند.
  * جزئیات در همان فایل توضیح داده شده است.
  */
 type TextVectors = {
@@ -27,8 +27,9 @@ type TextVectors = {
 };
 
 /**
- * `jest` با `rootDir: "src"` اجرا می‌شود، پس `__dirname` این‌جا
- * `back/src/common/utils` است. سه پله بالا = `back/`، یک پله دیگر = ریشهٔ مخزن.
+ * مسیر بردارها با `readSharedJson` و بالا رفتن تا ریشهٔ مخزن پیدا می‌شود
+ * (`pnpm-workspace.yaml` / `.git`)؛ به عمق پوشه وابسته نیست. جزئیات در
+ * `common/utils/repo-root.util.ts`.
  */
 const { vectors } = readSharedJson<TextVectors>('text-vectors.json');
 

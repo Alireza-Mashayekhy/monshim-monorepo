@@ -1,18 +1,70 @@
+# =============================================================================
+# زیرساخت توسعهٔ محلی: MySQL + Redis
+# =============================================================================
+# این فایل **مستقل** است (overlay نیست) و فقط سرویس‌های زیرساخت را بالا می‌آورد.
+# اپ‌ها روی خودِ هاست اجرا می‌شوند (`pnpm dev`) — نه داخل Docker.
+#
+#   pnpm db:up        # بالا آوردن
+#   pnpm db:logs      # دیدن لاگ (خصوصاً اولین باری که MySQL دیتابیس را می‌سازد)
+#   pnpm db:down      # خاموش کردن (داده‌ها می‌مانند)
+#   pnpm db:down -v   # خاموش کردن + پاک کردن داده‌ها
+#
+# پورت‌ها عمداً با production یکی نیستند تا اگر روی همان ماشین compose محصول
+# هم بالا بود، تداخل نکنند:
+#   MySQL : 3307  (→ 3306 داخل کانتینر)
+#   Redis : 6381  (→ 6379 داخل کانتینر)
+#
+# همین مقادیر در `apps/api/.env` استفاده می‌شوند (اسکریپت `pnpm setup` می‌سازد).
+# =============================================================================
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: monshim_mysql_dev
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DEV_DATABASE_PASSWORD:-root}
+      MYSQL_DATABASE: ${DEV_DATABASE_NAME:-monshim}
+    ports:
+      - '${DEV_DATABASE_PORT:-3307}:3306'
+    volumes:
+      - mysql_dev_data:/var/lib/mysql
+    healthcheck:
+      # تا وقتی MySQL آماده نشده، هرچیزی که به آن وصل شود fail می‌کند؛
+      # این healthcheck همان چیزی است که `docker compose ps` نشان می‌دهد.
+      test:
+        [
+          'CMD',
+          'mysqladmin',
+          'ping',
+          '-h',
+          '127.0.0.1',
+          '-uroot',
+          '-p${DEV_DATABASE_PASSWORD:-root}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 25s
 
   redis:
-    container_name: monshim_redis_dev
-
     image: redis:7-alpine
-
+    container_name: monshim_redis_dev
     restart: unless-stopped
-
+    # نشست‌های باطل‌شده باید از restart جان سالم به در ببرند.
+    command: ['redis-server', '--appendonly', 'yes', '--appendfsync', 'everysec']
     ports:
-      - "6381:6379"
-
+      - '${DEV_REDIS_PORT:-6381}:6379'
     volumes:
       - redis_dev_data:/data
-
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
+  mysql_dev_data:
   redis_dev_data:

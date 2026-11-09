@@ -83,11 +83,5 @@
     "typescript": "5.9.3",
     "@monshim/tsconfig": "workspace:*",
     "@monshim/eslint-config": "workspace:*"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp",
-      "unrs-resolver"
-    ]
   }
 }

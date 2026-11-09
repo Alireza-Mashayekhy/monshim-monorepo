@@ -4,7 +4,7 @@ import { DataSource } from 'typeorm';
 
 import { BlogArticle } from './blog.entity';
 
-// Keep this in sync with back/sql/blog.sql. CREATE IF NOT EXISTS is safe when
+// Keep this in sync with apps/api/sql/blog.sql. CREATE IF NOT EXISTS is safe when
 // multiple instances start together, and explicitly supports Persian text.
 export const CREATE_BLOG_TABLE = `CREATE TABLE IF NOT EXISTS \`blog_articles\` (
   \`id\` int NOT NULL AUTO_INCREMENT,
@@ -53,12 +53,12 @@ export class BlogSchemaService implements OnApplicationBootstrap {
         .filter(name => !columns.has(name));
       if (missing.length) {
         this.logger.error(
-          `Blog table is missing columns: ${missing.join(', ')}. Apply a reviewed migration; back/sql/blog.sql does not modify existing tables.`,
+          `Blog table is missing columns: ${missing.join(', ')}. Apply a reviewed migration; apps/api/sql/blog.sql does not modify existing tables.`,
         );
       }
     } catch (error) {
       this.logger.error(
-        `Blog schema check failed; verify database permissions and apply back/sql/blog.sql if needed: ${String(error)}`,
+        `Blog schema check failed; verify database permissions and apply apps/api/sql/blog.sql if needed: ${String(error)}`,
       );
     } finally {
       try {

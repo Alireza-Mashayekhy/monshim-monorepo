@@ -7,7 +7,7 @@
  * می‌تواند در ویرایش پروفایل آن را تغییر دهد؛ بنابراین هر دو مسیر (auth و
  * barber) از همین فهرست استفاده می‌کنند تا مقادیر از هم واگرا نشوند.
  *
- * نکته: این فهرست باید با `front/constants/activity-types.ts` یکی بماند.
+ * نکته: این فهرست باید با `apps/web/constants/activity-types.ts` یکی بماند.
  */
 export const ACTIVITY_TYPE_VALUES = ['women', 'men', 'both'] as const;
 

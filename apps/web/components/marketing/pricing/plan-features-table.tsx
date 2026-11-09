@@ -7,7 +7,7 @@ import { formatToman, PRICING_PLANS } from './plans-data';
 
 /**
  * جدول تعرفه پلن‌های منشیم — قیمت و سهمیه پیامک عیناً از
- * back/src/subscription/constants.ts.
+ * apps/api/src/subscription/constants.ts.
  */
 const PLAN_ROWS: {
   label: string;

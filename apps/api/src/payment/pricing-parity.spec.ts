@@ -11,11 +11,11 @@ import {
  * «قفل همسانی» منطق پول.
  *
  * مسئلهٔ واقعی: قیمت‌گذاری و کمیسیون در دو جا پیاده‌سازی شده است —
- * `back/src/payment/deposit-amount.ts` و `front/lib/order-pricing.ts`.
+ * `apps/api/src/payment/deposit-amount.ts` و `apps/web/lib/order-pricing.ts`.
  * اگر یکی تغییر کند و دیگری نه، مشتری در صفحه یک مبلغ می‌بیند و
  * در درگاه مبلغ دیگری پرداخت می‌کند. این یک خطای مالی است، نه UI.
  *
- * راه‌حل: فایل `shared/pricing-vectors.json` مجموعهٔ ثابتی از
+ * راه‌حل: فایل `packages/contracts/vectors/pricing-vectors.json` مجموعهٔ ثابتی از
  * ورودی‌ها و خروجی‌های «مرجع» است. بک‌اند و فرانت **هر دو** همین
  * بردارها را اجرا می‌کنند. هر انحرافی از هر طرف، تست را می‌شکند.
  *

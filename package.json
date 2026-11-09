@@ -3,12 +3,24 @@
   "version": "1.0.0",
   "private": true,
   "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20.9.0",
+    "pnpm": ">=9"
+  },
   "scripts": {
+    "setup": "node scripts/setup-env.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "dev": "turbo run dev",
+    "dev:api": "pnpm --filter @monshim/api dev",
+    "dev:web": "pnpm --filter @monshim/web dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
+    "db:up": "docker compose -f infra/docker-compose.dev.yml up -d",
+    "db:down": "docker compose -f infra/docker-compose.dev.yml down",
+    "db:logs": "docker compose -f infra/docker-compose.dev.yml logs -f",
+    "seed": "pnpm --filter @monshim/api seed",
     "prepare": "git config core.hooksPath .husky || true",
     "lint:staged": "lint-staged",
     "format": "prettier --write \"**/*.{json,md,yml,yaml,css,ts,tsx}\" --ignore-path .gitignore"
@@ -18,5 +30,13 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "prettier": "^3.9.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "sharp",
+      "bcrypt",
+      "@parcel/watcher",
+      "unrs-resolver"
+    ]
   }
 }

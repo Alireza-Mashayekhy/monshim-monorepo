@@ -25,37 +25,42 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
-## Project setup
+## Local development (monorepo)
+
+این اپ یکی از اعضای pnpm workspace است. **همهٔ دستورهای نصب و اجرا از ریشهٔ
+مخزن** زده می‌شوند؛ `pnpm install` داخل `apps/api` اشتباه است.
 
 ```bash
-$ pnpm install
+# از ریشهٔ مخزن
+pnpm install
+pnpm setup      # ساخت apps/api/.env با مقادیر توسعه (PORT=4000)
+pnpm db:up      # MySQL روی 3307 + Redis روی 6381
+pnpm dev        # بک‌اند روی 4000 (watch) + فرانت روی 3000
 ```
 
-## Compile and run the project
+- `ConfigModule` هیچ `envFilePath` ندارد و `.env` را از **`cwd`** می‌خواند؛
+  یعنی وقتی Nest از `apps/api` اجرا می‌شود، همین فایل خوانده می‌شود. اگر
+  دستی از ریشه اجرایش کنید (`node apps/api/dist/src/main`) env لود نمی‌شود.
+- `synchronize` فقط وقتی `NODE_ENV !== 'production'` روشن است. در توسعه
+  جدول‌ها خودکار ساخته می‌شوند؛ در production باید `apps/api/sql/` را اجرا
+  کنید.
+- بدون Redis و MySQL سرویس در بوت متوقف می‌شود (`ECONNREFUSED`)؛ این خطای
+  زیرساخت است، نه خطای کد.
 
-```bash
-# development
-$ pnpm run start
+### Scripts
 
-# watch mode
-$ pnpm run start:dev
+| دستور | کار |
+| --- | --- |
+| `pnpm dev` (ریشه) یا `pnpm --filter @monshim/api dev` | `nest start --watch` |
+| `pnpm --filter @monshim/api start:dev` | همان، با `--poll` (برای bind mount/Docker) |
+| `pnpm --filter @monshim/api build` | `nest build` → `dist/src/main.js` |
+| `pnpm --filter @monshim/api start:prod` | `node dist/src/main` (بعد از build) |
+| `pnpm --filter @monshim/api seed` | درج استان/شهرها (`seed.ts`) |
+| `pnpm --filter @monshim/api test` | Jest — بدون نیاز به MySQL/Redis |
 
-# production mode
-$ pnpm run start:prod
-```
-
-## Run tests
-
-```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
-```
+> تست e2e این اپ در ساختار فعلی وجود ندارد (پوشهٔ `test/` نیست)؛ اسکریپت
+> `test:e2e` هم به همین دلیل حذف شد. تست‌های HTTP در `src/**/*http.spec.ts`
+> با Jest اجرا می‌شوند.
 
 ## Payment redirect URLs (`APP_URL` / `FRONTEND_URL`)
 
