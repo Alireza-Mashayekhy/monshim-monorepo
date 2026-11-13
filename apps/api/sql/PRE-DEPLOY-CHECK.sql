@@ -6,7 +6,7 @@
 -- دیتابیس اجازهٔ ALTER ندهد، **سرویس اصلاً بالا نمی‌آید**.
 --
 -- اجرا:
---   mysql -u root -p monshim < back/sql/PRE-DEPLOY-CHECK.sql
+--   mysql -u root -p monshim < apps/api/sql/PRE-DEPLOY-CHECK.sql
 --
 -- خروجی: هر ردیف یک ستون مورد نیاز است و ستون `status` می‌گوید OK یا MISSING.
 -- اگر هیچ ردیف MISSING نبود، deploy امن است.
@@ -74,17 +74,17 @@ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user'
   AND COLUMN_NAME = 'national_code'
 
 UNION ALL
-SELECT 'booking.slot_interval_minutes',
+SELECT 'barber_profile.slot_interval_minutes',
        IF(COUNT(*) > 0, 'OK', 'MISSING')
 FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'booking'
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
   AND COLUMN_NAME = 'slot_interval_minutes'
 
 UNION ALL
-SELECT 'booking.deposit_token (لینک بیعانه)',
+SELECT 'bookings.deposit_token (لینک بیعانه)',
        IF(COUNT(*) > 0, 'OK', 'MISSING')
 FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'booking'
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'
   AND COLUMN_NAME = 'deposit_token'
 
 UNION ALL
