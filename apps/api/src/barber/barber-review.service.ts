@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Booking, BookingStatus } from 'src/booking/entities/booking.entity';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { getPagination, QueryDto } from 'src/common/database/query';
 import { toEnglishDigits } from 'src/common/utils/digits.util';
 import { In, Repository } from 'typeorm';
@@ -51,6 +52,10 @@ export class BarberReviewService implements OnModuleInit {
   // با راه‌اندازی سرور، میانگین امتیاز همه آرایشگرها از روی نظرات تاییدشده محاسبه می‌شود
   // (مقادیر استاتیک قبلی هم اینجا اصلاح می‌شوند)
   async onModuleInit() {
+    if (!isRuntimeFlagEnabled('ENABLE_STARTUP_DATA_TASKS')) {
+      return;
+    }
+
     try {
       await this.recalcAllRatings();
     } catch (error) {

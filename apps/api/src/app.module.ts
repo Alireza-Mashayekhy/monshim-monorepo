@@ -44,8 +44,11 @@ import { WalletModule } from './wallet/wallet.module';
     TypeOrmModule.forRootAsync({
       useClass: TypeOrmConfigService,
     }),
-    ScheduleModule.forRoot(),
-    // CacheModule.registerAsync({
+    ScheduleModule.forRoot({
+      cronJobs: process.env.ENABLE_BACKGROUND_JOBS !== 'false',
+      intervals: process.env.ENABLE_BACKGROUND_JOBS !== 'false',
+      timeouts: process.env.ENABLE_BACKGROUND_JOBS !== 'false',
+    }), // CacheModule.registerAsync({
     //   useFactory: async () => ({
     //     store: await redisStore({
     //       socket: {

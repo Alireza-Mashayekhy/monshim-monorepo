@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { In, Repository } from 'typeorm';
 
 import { SUBSCRIPTION_PLANS } from './constants';
@@ -14,6 +15,10 @@ export class SubscriptionService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    if (!isRuntimeFlagEnabled('ENABLE_STARTUP_DATA_TASKS')) {
+      return;
+    }
+
     await this.seedPlans();
   }
 

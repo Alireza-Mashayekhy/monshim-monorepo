@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { DataSource } from 'typeorm';
 
 import { BlogArticle } from './blog.entity';
@@ -32,6 +33,10 @@ export class BlogSchemaService implements OnApplicationBootstrap {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    if (!isRuntimeFlagEnabled('ENABLE_SCHEMA_MUTATIONS')) {
+      return;
+    }
+
     if (this.dataSource.options.type !== 'mysql') return;
     const runner = this.dataSource.createQueryRunner();
     try {

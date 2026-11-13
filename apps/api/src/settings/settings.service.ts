@@ -7,6 +7,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import {
   CommissionTier,
   DEFAULT_COMMISSION_MAX_AMOUNT,
@@ -32,6 +33,9 @@ export class SettingsService implements OnModuleInit {
    * ستون‌های کمیسیون پلکانی و سقف کمیسیون را در جدول `site_settings` ایجاد می‌کند.
    */
   async onModuleInit() {
+    if (!isRuntimeFlagEnabled('ENABLE_SCHEMA_MUTATIONS')) {
+      return;
+    }
     if (
       typeof this.settingsRepo?.query !== 'function' ||
       !this.settingsRepo?.metadata?.tableName

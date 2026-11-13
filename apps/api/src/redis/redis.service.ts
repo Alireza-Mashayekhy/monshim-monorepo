@@ -12,7 +12,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private client: RedisClientType;
 
   async onModuleInit() {
+    const redisDb = Number(process.env.REDIS_DB ?? 0);
+
+    if (!Number.isInteger(redisDb) || redisDb < 0 || redisDb > 15) {
+      throw new Error(
+        `Invalid REDIS_DB: ${process.env.REDIS_DB}. Expected an integer between 0 and 15.`,
+      );
+    }
+
     this.client = createClient({
+      database: redisDb,
       socket: {
         host: process.env.REDIS_HOST,
         port: Number(process.env.REDIS_PORT),
@@ -25,7 +34,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     await this.client.connect();
 
-    this.logger.log('Redis connected');
+    this.logger.log(`Redis connected (database: ${redisDb})`);
   }
 
   getClient() {

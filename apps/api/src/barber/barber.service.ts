@@ -14,6 +14,7 @@ import {
   isAllowedSlotIntervalMinutes,
   normalizeSlotIntervalMinutes,
 } from 'src/booking/slot-intervals';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { getPagination, QueryDto } from 'src/common/database/query';
 import { Role } from 'src/common/enum/role.enum';
 import { FrontendRevalidationService } from 'src/common/services/frontend-revalidation.service';
@@ -96,6 +97,10 @@ export class BarberService implements OnModuleInit {
    * بررسی و در صورت نیاز ایجاد می‌کند، بدون تغییر وضعیت حساب‌های موجود.
    */
   async onModuleInit() {
+    if (!isRuntimeFlagEnabled('ENABLE_SCHEMA_MUTATIONS')) {
+      return;
+    }
+
     if (
       typeof this.profileRepository?.query !== 'function' ||
       !this.profileRepository?.metadata?.tableName

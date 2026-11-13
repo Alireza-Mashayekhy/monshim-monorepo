@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { ensureEntitySchema } from 'src/common/utils/schema-guard.util';
 import { DataSource } from 'typeorm';
 
@@ -29,6 +30,10 @@ export class PublicPageSchemaService implements OnApplicationBootstrap {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    if (!isRuntimeFlagEnabled('ENABLE_SCHEMA_MUTATIONS')) {
+      return;
+    }
+
     for (const entity of GUARDED_ENTITIES) {
       try {
         const report = await ensureEntitySchema(this.dataSource, entity);
