@@ -16,6 +16,7 @@ import { BarberModule } from './barber/barber.module';
 import { BlogModule } from './blog/blog.module';
 import { BookingModule } from './booking/booking.module';
 import { ClubModule } from './club/club.module';
+import { isRuntimeFlagEnabled } from './common/config/runtime-flags';
 import { createThrottlerOptions } from './common/config/throttler.config';
 import { TypeOrmConfigService } from './common/database/typeorm.config';
 import { FilesModule } from './files/files.module';
@@ -45,10 +46,12 @@ import { WalletModule } from './wallet/wallet.module';
       useClass: TypeOrmConfigService,
     }),
     ScheduleModule.forRoot({
-      cronJobs: process.env.ENABLE_BACKGROUND_JOBS !== 'false',
-      intervals: process.env.ENABLE_BACKGROUND_JOBS !== 'false',
-      timeouts: process.env.ENABLE_BACKGROUND_JOBS !== 'false',
-    }), // CacheModule.registerAsync({
+      cronJobs: isRuntimeFlagEnabled('ENABLE_BACKGROUND_JOBS'),
+      intervals: isRuntimeFlagEnabled('ENABLE_BACKGROUND_JOBS'),
+      timeouts: isRuntimeFlagEnabled('ENABLE_BACKGROUND_JOBS'),
+    }),
+
+    // CacheModule.registerAsync({
     //   useFactory: async () => ({
     //     store: await redisStore({
     //       socket: {
