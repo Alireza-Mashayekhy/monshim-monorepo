@@ -552,6 +552,13 @@ export class PaymentService {
       );
     }
 
+    // یادآوری انتخابی مشتری (رایگان؛ از اعتبار پیامک آرایشگر کسر نمی‌شود)
+    const sendSmsReminder = dto.sendSmsReminder === true;
+    if (sendSmsReminder && !dto.reminderHours) {
+      throw new BadRequestException('زمان ارسال پیامک یادآوری را انتخاب کنید');
+    }
+    const reminderHours = sendSmsReminder ? (dto.reminderHours ?? null) : null;
+
     const user = await this.userRepo.findOne({ where: { id: customerId } });
     if (!user) {
       throw new NotFoundException('کاربر یافت نشد');
@@ -811,6 +818,8 @@ export class PaymentService {
           depositAmount,
           commissionAmount,
           holdOrderId: orderId,
+          sendSmsReminder,
+          reminderHours,
         }),
         status: PaymentStatus.PENDING,
         description: `رزرو ${services.length} سرویس + کمیسیون سایت`,
@@ -2084,10 +2093,24 @@ export class PaymentService {
         onlinePaidAt: payment.paidAt ?? new Date(),
       };
 
+      /**
+       * یادآوری انتخابی مشتری. فقط روی ردیف اول می‌نشیند تا برای رزرو
+       * چندخدمتی چند پیامک تکراری نرود. خودِ ارسال را `ReminderService`
+       * انجام می‌دهد و فقط وقتی که آرایشگر نوبت را تایید کرده باشد.
+       */
+      const metaReminderHours = Number(meta.reminderHours);
+      const reminderFields =
+        meta.sendSmsReminder === true &&
+        Number.isInteger(metaReminderHours) &&
+        metaReminderHours > 0
+          ? { sendSmsReminder: true, reminderHours: metaReminderHours }
+          : {};
+
       if (meta.serviceId && !meta.items) {
         const saved = await bookingRepo.save(
           bookingRepo.create({
             ...baseBooking,
+            ...reminderFields,
             serviceId: meta.serviceId,
             time: meta.time,
             price: meta.price,
@@ -2102,10 +2125,11 @@ export class PaymentService {
           throw new BadRequestException('جزئیات رزرو در پرداخت ثبت نشده است.');
         }
 
-        for (const item of items) {
+        for (const [index, item] of items.entries()) {
           const saved = await bookingRepo.save(
             bookingRepo.create({
               ...baseBooking,
+              ...(index === 0 ? reminderFields : {}),
               serviceId: item.serviceId,
               time: item.time,
               price: item.price,

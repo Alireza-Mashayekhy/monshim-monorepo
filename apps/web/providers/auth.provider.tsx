@@ -64,7 +64,11 @@ export default function AuthProvider({
       const callbackUrl = new URLSearchParams(window.location.search).get(
         'callbackUrl',
       );
-      router.replace(getAuthDestination(callbackUrl, getRoleLandingPath(user)));
+      // ثبت‌نام تازهٔ آرایشگر مقصد خودش (صفحهٔ خوش‌آمدگویی) را تعیین کرده است.
+      router.replace(
+        useAuthStore.getState().postAuthPath ??
+          getAuthDestination(callbackUrl, getRoleLandingPath(user)),
+      );
     }
   }, [gate, pathname, router, user]);
 

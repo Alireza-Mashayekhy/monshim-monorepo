@@ -21,7 +21,11 @@ import {
 } from '@/components/ui/input-otp';
 import { getActivityTypeLabel } from '@/constants/activity-types';
 import { getApiErrorMessage, getErrorStatus } from '@/lib/api-error';
-import { type CallbackUrlValue, getAuthDestination } from '@/lib/auth';
+import {
+  buildAuthHref,
+  type CallbackUrlValue,
+  PROVIDER_WELCOME_PATH,
+} from '@/lib/auth';
 import { jalaliToIso } from '@/lib/date-utils';
 import { stripNumericSeparators, toEnglishDigits } from '@/lib/digits';
 import { getImageUploadError, MAX_PORTFOLIO_IMAGES } from '@/lib/image-upload';
@@ -30,6 +34,7 @@ import { isValidIranianNationalCode } from '@/lib/national-code';
 import { isValidPhone, normalizePhone, onlyDigits } from '@/lib/phone';
 import { formatPrice } from '@/lib/utils';
 import { useRegisterBarber, useSendOtp } from '@/services/features/auth/hooks';
+import { useAuthStore } from '@/store/auth.store';
 import { useBarberSignupStore } from '@/store/useBarberSignupStore';
 
 const MIN_DEPOSIT = 100_000;
@@ -239,15 +244,25 @@ export default function BarbaerStep5({
         );
       });
 
+      /**
+       * ثبت‌نام موفق تنها جایی است که «آرایشگر تازه» قطعی می‌شود؛ پس فقط از
+       * همین‌جا به صفحهٔ خوش‌آمدگویی می‌رویم (ورودهای بعدی مستقیم به داشبورد
+       * می‌روند). مقصد پیش از درخواست ثبت می‌شود تا ریدایرکتِ `AuthProvider`
+       * هم — که با واردشدن کاربر فعال می‌شود — به همین صفحه برود.
+       */
+      const welcomeHref = buildAuthHref(PROVIDER_WELCOME_PATH, callbackUrl);
+      useAuthStore.getState().setPostAuthPath(welcomeHref);
+
       await registerMutation.mutateAsync(formData);
 
       toast.success('ثبت‌نام شما با موفقیت انجام شد!');
       setIsOtpModalOpen(false);
       setOtpCode('');
       store.reset();
-      router.replace(getAuthDestination(callbackUrl, '/dashboard'));
+      router.replace(welcomeHref);
       router.refresh();
     } catch (error) {
+      useAuthStore.getState().setPostAuthPath(null);
       toast.error(
         getApiErrorMessage(
           error,

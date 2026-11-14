@@ -25,6 +25,10 @@ export interface InitiateBookingPaymentDto {
   date: string;
   time: string;
   note?: string;
+  /** مشتری می‌خواهد پیش از نوبت پیامک یادآوری بگیرد (رایگان) */
+  sendSmsReminder?: boolean;
+  /** چند ساعت قبل از نوبت — یکی از REMINDER_HOURS_OPTIONS */
+  reminderHours?: number;
 }
 
 export interface ChargeWalletDto {

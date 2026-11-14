@@ -4,14 +4,14 @@
  * آپارات سه نوع کد اشتراک‌گذاری می‌دهد (script، AMP و iframe)؛ فقط iframe
  * با SSR و hydration سازگار است، پس در کل پروژه از فرمت iframe استفاده
  * می‌شود:
- * `https://www.aparat.com/video/video/embed/videohash/{hash}/vt/frame`
+ * `https://www.aparat.com/video/video/embed/videohash/{hash}/vt/frame?titleShow=true`
  */
 
 const APARAT_API_BASE = 'https://www.aparat.com/etc/api/video/videohash';
 
 /** آدرس embed رسمی آپارات برای یک videohash */
 export function aparatEmbedUrl(hash: string): string {
-  return `https://www.aparat.com/video/video/embed/videohash/${hash}/vt/frame`;
+  return `https://www.aparat.com/video/video/embed/videohash/${hash}/vt/frame?titleShow=true`;
 }
 
 /** آدرس صفحهٔ ویدیو در خود آپارات (برای لینک «تماشا در آپارات») */
