@@ -1,11 +1,15 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
+  IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
 } from 'class-validator';
+import { REMINDER_HOURS_OPTIONS } from 'src/club/dto/create-manual-booking.dto';
 
 export class InitiateBookingPaymentDto {
   @ApiProperty({ description: 'شناسه آرایشگر (User.id)' })
@@ -44,4 +48,20 @@ export class InitiateBookingPaymentDto {
   @IsOptional()
   @IsString()
   note?: string;
+
+  /**
+   * مشتری می‌خواهد پیش از نوبت پیامک یادآوری بگیرد.
+   * برخلاف نوبت دستی، این یادآوری از اعتبار پیامک آرایشگر کسر نمی‌شود.
+   */
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  sendSmsReminder?: boolean;
+
+  /** چند ساعت قبل از نوبت پیامک یادآوری ارسال شود */
+  @ApiPropertyOptional({ enum: REMINDER_HOURS_OPTIONS })
+  @IsOptional()
+  @IsInt()
+  @IsIn(REMINDER_HOURS_OPTIONS)
+  reminderHours?: number;
 }

@@ -11,6 +11,12 @@ const AUTH_PAGE_PATHS = [
   '/provider-signup',
 ];
 
+/**
+ * صفحهٔ خوش‌آمدگویی آرایشگر تازه‌ثبت‌نام‌شده (انتخاب بین آموزش و داشبورد).
+ * فقط بلافاصله پس از ثبت‌نام موفق آرایشگر به آن هدایت می‌شویم.
+ */
+export const PROVIDER_WELCOME_PATH = '/provider-welcome';
+
 export type CallbackUrlValue = string | string[] | null | undefined;
 
 export function isPathWithin(pathname: string, path: string) {
@@ -32,7 +38,9 @@ export function sanitizeCallbackUrl(value: CallbackUrlValue): string | null {
     const url = new URL(candidate, CALLBACK_URL_BASE);
     if (
       url.origin !== CALLBACK_URL_BASE ||
-      AUTH_PAGE_PATHS.some(path => isPathWithin(url.pathname, path))
+      AUTH_PAGE_PATHS.some(path => isPathWithin(url.pathname, path)) ||
+      // صفحهٔ خوش‌آمدگویی مقصدِ «ورود» نیست؛ ورود مجدد باید به داشبورد برود.
+      isPathWithin(url.pathname, PROVIDER_WELCOME_PATH)
     ) {
       return null;
     }
@@ -106,8 +114,25 @@ export function getRoleLandingPath(user: unknown) {
   return '/panel/home';
 }
 
+/**
+ * مقصد دکمهٔ «ورود به داشبورد» در صفحهٔ خوش‌آمدگویی: اگر ثبت‌نام با یک
+ * callbackUrl معتبرِ داخل داشبورد شروع شده بود همان، وگرنه خودِ داشبورد.
+ */
+export function getDashboardEntryPath(callbackUrl: CallbackUrlValue) {
+  const safe = sanitizeCallbackUrl(callbackUrl);
+  if (!safe) return '/dashboard';
+
+  const { pathname } = new URL(safe, CALLBACK_URL_BASE);
+  return isPathWithin(pathname, '/dashboard') ? safe : '/dashboard';
+}
+
 export function canAccessPath(pathname: string, user: unknown) {
   if (isPathWithin(pathname, '/admin')) return isAdmin(user);
-  if (isPathWithin(pathname, '/dashboard')) return isBarber(user);
+  if (
+    isPathWithin(pathname, '/dashboard') ||
+    isPathWithin(pathname, PROVIDER_WELCOME_PATH)
+  ) {
+    return isBarber(user);
+  }
   return true;
 }

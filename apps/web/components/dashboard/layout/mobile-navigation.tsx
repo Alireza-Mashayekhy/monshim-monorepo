@@ -2,27 +2,15 @@
 
 import { Store } from 'lucide-react';
 import Image from 'next/image';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 
-import { Drawer, DrawerContent } from '@/components/ui/drawer';
-import { cn, getFullImageUrl } from '@/lib/utils';
+import { getFullImageUrl } from '@/lib/utils';
 import { useMyBarberProfile } from '@/services/features/barber/hooks';
 import { useAuthStore } from '@/store/auth.store';
 
 import BottomNavigation from './bottom-navigation';
-import { dashboardRoutes } from './routes';
-
-const otherRoutes = [
-  dashboardRoutes[2],
-  dashboardRoutes[3],
-  dashboardRoutes[4],
-  dashboardRoutes[6],
-  dashboardRoutes[8],
-  // پشتیبانی (آخرین آیتم dashboardRoutes)
-  dashboardRoutes[dashboardRoutes.length - 1],
-];
+import HelpLink from './help-link';
+import MoreMenu from './more-menu';
 
 export default function MobileNavigation() {
   const [open, setOpen] = useState(false);
@@ -51,7 +39,7 @@ export default function MobileNavigation() {
     <>
       <header className="lg:hidden sticky top-0 z-40 h-16 bg-primary-3/90 backdrop-blur-xl border-b border-primary/10">
         <div className="h-full px-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+          <div className="flex min-w-0 items-center gap-2.5">
             <div className="relative w-10 h-10 shrink-0 rounded-full bg-primary-2 text-primary flex items-center justify-center border-2 border-white shadow-sm ring-1 ring-primary/20 overflow-hidden">
               {salonImage ? (
                 <Image
@@ -77,77 +65,14 @@ export default function MobileNavigation() {
               </p>
             </div>
           </div>
+
+          <HelpLink />
         </div>
       </header>
 
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerContent>
-          <div className="grid grid-cols-3 gap-2 px-2 py-10">
-            {otherRoutes.map(route => {
-              return (
-                <MobileMenuItem
-                  key={route.href}
-                  {...route}
-                  onClick={() => setOpen(false)}
-                />
-              );
-            })}
-          </div>
-        </DrawerContent>
-      </Drawer>
+      <MoreMenu open={open} onOpenChange={setOpen} />
 
-      <BottomNavigation onMoreClick={() => setOpen(true)} />
+      <BottomNavigation moreOpen={open} onMoreClick={() => setOpen(true)} />
     </>
-  );
-}
-
-interface MobileMenuItemProps {
-  title: string;
-  href: string;
-  icon: React.ElementType;
-  onClick: () => void;
-}
-
-function MobileMenuItem({
-  title,
-  href,
-  icon: Icon,
-  onClick,
-}: MobileMenuItemProps) {
-  const pathname = usePathname();
-
-  const active =
-    href === '/dashboard'
-      ? pathname === href
-      : pathname === href || pathname.startsWith(`${href}/`);
-
-  return (
-    <Link
-      href={href}
-      onClick={onClick}
-      className="flex flex-col items-center justify-center gap-1"
-    >
-      <div
-        className={cn(
-          'rounded-xl flex items-center justify-center transition-all',
-          active ? 'bg-primary/10' : 'bg-transparent',
-        )}
-      >
-        <Icon
-          size={20}
-          strokeWidth={active ? 2.4 : 2}
-          className={cn(active ? 'text-primary' : 'text-slate-400')}
-        />
-      </div>
-
-      <span
-        className={cn(
-          'text-[10px] font-medium text-center',
-          active ? 'text-primary' : 'text-slate-400',
-        )}
-      >
-        {title}
-      </span>
-    </Link>
   );
 }

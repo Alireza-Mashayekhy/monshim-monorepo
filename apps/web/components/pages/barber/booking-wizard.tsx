@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { LightboxModal } from '@/components/pages/barber/lightboxModal';
@@ -9,6 +9,7 @@ import { Step1Profile } from '@/components/pages/barber/step1';
 import { Step2BookConfirm } from '@/components/pages/barber/step2';
 import { Button } from '@/components/ui/button';
 import { buildAuthHref } from '@/lib/auth';
+import { isReminderInFuture, REMINDER_HOUR_CHOICES } from '@/lib/reminder';
 import type { ApiListResponse } from '@/services/api/types';
 import { useCurrentUser } from '@/services/features/auth/hooks';
 import { useBarber } from '@/services/features/barber/hooks';
@@ -33,6 +34,26 @@ export default function BookingWizard({
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [reminderHours, setReminderHours] = useState<number | null>(null);
+
+  // فقط گزینه‌هایی که زمان ارسالشان برای ساعت انتخاب‌شده هنوز نگذشته است.
+  const availableReminderHours = useMemo(
+    () =>
+      selectedDate && selectedTime
+        ? REMINDER_HOUR_CHOICES.map(choice => choice.value).filter(hours =>
+            isReminderInFuture(selectedDate, selectedTime, hours),
+          )
+        : [],
+    [selectedDate, selectedTime],
+  );
+
+  // انتخاب قبلی اگر برای ساعت جدید دیگر ممکن نباشد نادیده گرفته می‌شود.
+  const effectiveReminderHours =
+    reminderHours !== null && availableReminderHours.includes(reminderHours)
+      ? reminderHours
+      : null;
+  const wantsReminder = reminderEnabled && availableReminderHours.length > 0;
 
   // Queries & Mutations
   const {
@@ -73,6 +94,11 @@ export default function BookingWizard({
       return;
     }
 
+    if (wantsReminder && effectiveReminderHours === null) {
+      toast.error('زمان ارسال پیامک یادآوری را انتخاب کنید.');
+      return;
+    }
+
     try {
       await payBookingMutation.mutateAsync({
         barberId: Number(id),
@@ -80,6 +106,9 @@ export default function BookingWizard({
         date: selectedDate,
         time: selectedTime,
         note: '',
+        ...(wantsReminder && effectiveReminderHours !== null
+          ? { sendSmsReminder: true, reminderHours: effectiveReminderHours }
+          : {}),
       });
     } catch (error: any) {
       toast.error(
@@ -134,6 +163,14 @@ export default function BookingWizard({
           onConfirm={handlePayment}
           onBack={() => setStep(1)}
           isSubmitting={payBookingMutation.isPending}
+          reminderEnabled={wantsReminder}
+          reminderHours={effectiveReminderHours}
+          availableReminderHours={availableReminderHours}
+          onReminderEnabledChange={enabled => {
+            setReminderEnabled(enabled);
+            if (!enabled) setReminderHours(null);
+          }}
+          onReminderHoursChange={setReminderHours}
         />
       )}
 

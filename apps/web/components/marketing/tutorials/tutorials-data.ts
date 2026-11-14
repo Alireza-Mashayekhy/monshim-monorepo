@@ -24,7 +24,7 @@ export const MAIN_TUTORIAL: TutorialVideo = {
   title: 'معرفی کامل سایت منشیم',
   description:
     'در این ویدیو با یک نمای کلی از منشیم آشنا می‌شوید: ثبت‌نام آرایشگاه، دریافت صفحهٔ اختصاصی رزرو آنلاین و مدیریت نوبت‌ها، مشتریان و درآمد سالن همه در یک جا.',
-  aparatUrl: 'https://www.aparat.com/v/ssiqc8m',
+  aparatUrl: 'https://www.aparat.com/v/dtwxh94',
   // تاریخ دقیق انتشار در آپارات؛ در صورت نیاز اصلاح شود
   uploadDate: '2026-11-03',
 };

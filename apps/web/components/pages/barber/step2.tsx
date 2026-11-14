@@ -2,6 +2,7 @@
 import { ArrowRight, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { ReminderPicker } from '@/components/pages/barber/reminder-picker';
 import { BackButton } from '@/components/shared/back-button';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,6 +33,11 @@ interface Step2BookConfirmProps {
   onConfirm: () => void;
   onBack: () => void;
   isSubmitting: boolean;
+  reminderEnabled: boolean;
+  reminderHours: number | null;
+  availableReminderHours: number[];
+  onReminderEnabledChange: (enabled: boolean) => void;
+  onReminderHoursChange: (hours: number) => void;
 }
 
 export const Step2BookConfirm: React.FC<Step2BookConfirmProps> = ({
@@ -47,6 +53,11 @@ export const Step2BookConfirm: React.FC<Step2BookConfirmProps> = ({
   onConfirm,
   onBack,
   isSubmitting,
+  reminderEnabled,
+  reminderHours,
+  availableReminderHours,
+  onReminderEnabledChange,
+  onReminderHoursChange,
 }) => {
   const today = useMemo(() => new Date(), []);
   const initialJ = gregorianToJalali(today);
@@ -103,6 +114,11 @@ export const Step2BookConfirm: React.FC<Step2BookConfirmProps> = ({
   const formattedDate = selectedDate ? formatJalaliDate(selectedDate) : 'تاریخ';
   const selectedTimeAvailable =
     !!selectedTime && availableTimes.includes(selectedTime) && !timesFetching;
+  // یادآوری روشن است ولی هنوز «چند ساعت قبل» انتخاب نشده
+  const reminderIncomplete =
+    reminderEnabled &&
+    availableReminderHours.length > 0 &&
+    reminderHours === null;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -230,6 +246,18 @@ export const Step2BookConfirm: React.FC<Step2BookConfirmProps> = ({
           </div>
         )}
 
+        {/* پیامک یادآوری — بعد از انتخاب ساعت معنا پیدا می‌کند */}
+        {selectedTimeAvailable && (
+          <ReminderPicker
+            enabled={reminderEnabled}
+            hours={reminderHours}
+            availableHours={availableReminderHours}
+            disabled={isSubmitting}
+            onEnabledChange={onReminderEnabledChange}
+            onHoursChange={onReminderHoursChange}
+          />
+        )}
+
         {/* Summary Card */}
         <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100">
           <div className="flex items-center justify-between mb-4">
@@ -322,6 +350,7 @@ export const Step2BookConfirm: React.FC<Step2BookConfirmProps> = ({
           disabled={
             !selectedTimeAvailable ||
             !selectedDate ||
+            reminderIncomplete ||
             isSubmitting ||
             timesFetching
           }

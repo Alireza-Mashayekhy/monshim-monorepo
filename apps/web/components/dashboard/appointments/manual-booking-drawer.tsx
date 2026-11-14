@@ -47,6 +47,7 @@ import { jalaliToIso } from '@/lib/date-utils';
 import { gregorianToJalali } from '@/lib/jalali';
 import { computeOrderPricing, formatCommissionLabel } from '@/lib/order-pricing';
 import { normalizePhone } from '@/lib/phone';
+import { REMINDER_HOUR_CHOICES } from '@/lib/reminder';
 import { cn, formatPrice, toPersianDigits } from '@/lib/utils';
 import {
   useMyBarberProfile,
@@ -84,16 +85,6 @@ const DEFAULT_VALUES: FormValues = {
   sendSmsReminder: false,
   reminderHours: null,
 };
-
-/** گزینه‌های «چند ساعت قبل» برای پیامک یادآوری */
-const REMINDER_HOUR_CHOICES = [
-  { value: 1, label: '۱ ساعت قبل' },
-  { value: 2, label: '۲ ساعت قبل' },
-  { value: 4, label: '۴ ساعت قبل' },
-  { value: 6, label: '۶ ساعت قبل' },
-  { value: 12, label: '۱۲ ساعت قبل' },
-  { value: 24, label: '۱ روز قبل' },
-];
 
 const schema = z
   .object({
