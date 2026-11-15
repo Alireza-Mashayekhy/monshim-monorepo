@@ -18,6 +18,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { resolveBarberGenderFilter } from '@/lib/barber-gender';
 import { isoToJalali } from '@/lib/date-utils';
 import { useCurrentUser } from '@/services/features/auth/hooks';
 import { useHomeBarberList } from '@/services/features/barber/hooks';
@@ -36,10 +37,8 @@ export default function Home() {
   const effectiveCityId =
     user?.cityId ?? user?.city?.id ?? locationStore.cityId ?? undefined;
   const effectiveCityName = user?.city?.name || locationStore.cityName || '';
-  const gender =
-    user?.gender === 'male' || user?.gender === 'female'
-      ? user.gender
-      : undefined;
+  // تنها منبع منطق فیلتر جنسیت (مشترک با `/panel/explore`).
+  const gender = resolveBarberGenderFilter(user);
 
   // دریافت لیست نوبت‌های کاربر از دیتابیس
   const { data: myBookingsData, isLoading: bookingsLoading } = useMyBookings({

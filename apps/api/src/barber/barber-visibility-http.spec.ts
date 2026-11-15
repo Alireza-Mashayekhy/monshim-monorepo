@@ -222,8 +222,15 @@ describe('admin barber visibility and login over HTTP', () => {
     app = module.createNestApplication();
     app.setGlobalPrefix('api');
     app.use(cookieParser());
+    // ⚠️ باید همان تنظیمات `main.ts` باشد؛ نبودِ `forbidNonWhitelisted` باعث
+    // شد باگ «property gender should not exist» در تست‌ها دیده نشود.
     app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        transformOptions: { enableImplicitConversion: true },
+      }),
     );
     app.useGlobalInterceptors(new ResponseInterceptor());
     await app.init();

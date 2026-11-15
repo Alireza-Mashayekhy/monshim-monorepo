@@ -65,3 +65,67 @@ describe('barber visibility SQL mapping', () => {
     }
   });
 });
+
+/**
+ * فیلتر جنسیت در SQL واقعی (نه mock رشته‌ای).
+ *
+ * این تست تضمین می‌کند که `gender=male|female` واقعاً یک شرط `activityType`
+ * روی کوئری اضافه مي‌کند و مقدار نامعتبر هیچ شرطی اضافه نمی‌کند — یعنی فیلتر
+ * «کار می‌کند» و در حالت خالی «سالن‌ها را حذف نمی‌کند».
+ */
+describe('barber list gender filter SQL', () => {
+  async function captureListQueries(
+    filters?: Parameters<BarberService['findAll']>[1],
+  ) {
+    const source = new DataSource({
+      type: 'mysql',
+      database: 'test',
+      entities: [join(__dirname, '../**/*.entity.ts')],
+    });
+    await (source as any).buildMetadatas();
+
+    const statements: { sql: string; params: Record<string, unknown> }[] = [];
+    const userRepo = source.getRepository(User);
+    const profileRepo = source.getRepository(BarberProfile);
+    const original = userRepo.createQueryBuilder.bind(userRepo);
+    jest
+      .spyOn(userRepo, 'createQueryBuilder')
+      .mockImplementation((alias: string) => {
+        const qb = original(alias);
+        qb.getManyAndCount = () => {
+          statements.push({ sql: qb.getQuery(), params: qb.getParameters() });
+          return Promise.resolve([[], 0]);
+        };
+        return qb;
+      });
+
+    const service = new BarberService(userRepo, profileRepo, {} as any);
+    await service.findAll({ page: 1, limit: 10 }, filters);
+
+    return statements[0];
+  }
+
+  it('gender=male → activityType در (men, both)', async () => {
+    const statement = await captureListQueries({ gender: 'male' });
+    expect(statement.sql).toContain('`profile`.`activity_type` IN');
+    expect(statement.params.activityTypes).toEqual(['men', 'both']);
+  });
+
+  it('gender=female → activityType در (women, both)', async () => {
+    const statement = await captureListQueries({ gender: 'female' });
+    expect(statement.sql).toContain('`profile`.`activity_type` IN');
+    expect(statement.params.activityTypes).toEqual(['women', 'both']);
+  });
+
+  it('بدون gender → هیچ شرط activityType اضافه نمی‌شود', async () => {
+    const statement = await captureListQueries(undefined);
+    expect(statement.sql).not.toContain('`profile`.`activity_type` IN');
+  });
+
+  it('مقدار نامعتبر (مثل men) مثل «بدون فیلتر» رفتار می‌کند', async () => {
+    const statement = await captureListQueries({
+      gender: 'men' as unknown as 'male',
+    });
+    expect(statement.sql).not.toContain('`profile`.`activity_type` IN');
+  });
+});

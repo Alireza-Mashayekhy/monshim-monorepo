@@ -24,11 +24,7 @@ import {
   MAX_BARBER_PORTFOLIO_IMAGES,
 } from 'src/common/constants/constants';
 import { AuthGuard } from 'src/common/guards/auth.guard';
-import {
-  normalizeNumberValue,
-  toEnglishDigits,
-  toPersianDigits,
-} from 'src/common/utils/digits.util';
+import { toEnglishDigits, toPersianDigits } from 'src/common/utils/digits.util';
 import { FilesService } from 'src/files/files.service';
 import { Repository } from 'typeorm';
 
@@ -59,34 +55,38 @@ export class BarberController {
   }
 
   // ---- مسیرهای عمومی ----
+  /**
+   * فهرست عمومی سالن‌ها.
+   *
+   * ⚠️ فیلترها **فقط** از `@Query() query` خوانده می‌شوند.
+   *
+   * قبلاً همین پارامترها دوباره با `@Query('cityId')` و… گرفته و روی مقادیر
+   * DTO ترجیح داده می‌شدند. دو مشکل داشت:
+   *   ۱. منبع حقیقت دوگانه بود و اعتبارسنجی DTO دور زده می‌شد.
+   *   ۲. هر پارامتری که در DTO اعلام نشده بود (مثل `gender`) با
+   *      `forbidNonWhitelisted` خطای «property gender should not exist»
+   *      می‌داد و کل فهرست برای کاربر عادی بارگذاری نمی‌شد.
+   * حالا `gender` در `BarberQueryDto` اعلام و اعتبارسنجی می‌شود و تنها منبع
+   * ورودی، همان DTO است.
+   */
   @Get()
-  findAll(
-    @Req() req: any,
-    @Query() query: BarberQueryDto,
-    @Query('cityId') cityId?: number | string,
-    @Query('provinceId') provinceId?: number | string,
-    @Query('minPrice') minPrice?: number | string,
-    @Query('maxPrice') maxPrice?: number | string,
-    @Query('minRating') minRating?: number | string,
-    @Query('gender') gender?: string,
-  ) {
-    const parseOptNum = (val?: number | string): number | undefined => {
-      if (val === undefined || val === '') return undefined;
-      const parsed = normalizeNumberValue(val);
-      return typeof parsed === 'number' && Number.isFinite(parsed)
-        ? parsed
-        : undefined;
-    };
-
+  findAll(@Req() req: any, @Query() query: BarberQueryDto) {
     return this.barberService.findAll(query, {
-      cityId: parseOptNum(cityId) ?? query.cityId ?? undefined,
-      provinceId: parseOptNum(provinceId) ?? query.provinceId ?? undefined,
-      minPrice: parseOptNum(minPrice) ?? query.minPrice ?? undefined,
-      maxPrice: parseOptNum(maxPrice) ?? query.maxPrice ?? undefined,
-      minRating: parseOptNum(minRating) ?? query.minRating ?? undefined,
-      // در endpoint عمومی، req.user الزاماً توسط AuthGuard پر نمی‌شود؛ صفحات
-      // داخل پنل جنسیت جاری را صریح می‌فرستند تا فیلتر برای آن‌ها اعمال شود.
-      gender: req.user?.gender ?? gender ?? null,
+      cityId: query.cityId,
+      provinceId: query.provinceId,
+      minPrice: query.minPrice,
+      maxPrice: query.maxPrice,
+      minRating: query.minRating,
+      /**
+       * اولویت: جنسیت کاربر احراز‌هویت‌شده.
+       *
+       * این endpoint عمومی است و `AuthGuard` ندارد؛ اگر کاربری توکن معتبر
+       * کوکی داشته باشد، `req.user` پر می‌شود. وقتی جنسیت کاربر معلوم است،
+       * نباید با پارامتر آدرس قابل دور زدن باشد (فهرست همیشه متناسب با
+       * جنسیت خودِ کاربر نمایش داده می‌شود). برای کاربر مهمان، پارامتر
+       * اعتبارسنجی‌شدهٔ `gender` اعمال می‌شود.
+       */
+      gender: req.user?.gender ?? query.gender ?? null,
     });
   }
 

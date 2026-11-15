@@ -60,6 +60,21 @@ function stringArraysEqual(
   return a.every((item, index) => item === b[index]);
 }
 
+/**
+ * نرمال‌سازی فیلتر جنسیت ورودی.
+ *
+ * خروجی فقط `male`، `female` یا `null` است. جدا کردن این منطق از کوئری،
+ * تست‌پذیرش می‌کند و مانع می‌شود مقادیر ناشناخته (مثل «men» که نام
+ * `activityType` است) به‌طور ناخواسته فیلتر اعمال کنند.
+ */
+export function normalizeGenderFilter(
+  value: unknown,
+): 'male' | 'female' | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'male' || normalized === 'female' ? normalized : null;
+}
+
 @Injectable()
 export class BarberService implements OnModuleInit {
   private readonly logger = new Logger(BarberService.name);
@@ -348,11 +363,17 @@ export class BarberService implements OnModuleInit {
       });
     }
 
-    if (filters?.gender === 'male') {
+    /**
+     * فیلتر جنسیت مخاطب سالن: `male` → سالن‌های مردانه و مشترک، `female` →
+     * سالن‌های زنانه و مشترک. هر مقدار دیگری (خالی/ناشناخته) یعنی «بدون
+     * فیلتر» تا یک پارامتر خراب، فهرست را خالی یا خطادار نکند.
+     */
+    const genderFilter = normalizeGenderFilter(filters?.gender);
+    if (genderFilter === 'male') {
       qb.andWhere('profile.activityType IN (:...activityTypes)', {
         activityTypes: ['men', 'both'],
       });
-    } else if (filters?.gender === 'female') {
+    } else if (genderFilter === 'female') {
       qb.andWhere('profile.activityType IN (:...activityTypes)', {
         activityTypes: ['women', 'both'],
       });
