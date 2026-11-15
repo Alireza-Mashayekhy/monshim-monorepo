@@ -32,7 +32,9 @@ function apiOriginPreconnect(): string | null {
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
   title: {
-    default: 'رزرو آنلاین آرایشگاه و مدیریت سالن',
+    // فقط وقتی استفاده می‌شود که صفحه metadata خودش را تعریف نکرده باشد.
+    // با عنوانِ صفحهٔ اصلی هم‌راستاست (نیتِ صاحب سالن، سپس مشتری).
+    default: 'نرم افزار مدیریت آرایشگاه و نوبت دهی آنلاین',
     template: `%s | ${siteConfig.name}`,
   },
   description: siteConfig.description,
@@ -41,6 +43,27 @@ export const metadata: Metadata = {
   // Older iOS releases still require the Apple-specific standalone flag.
   other: { 'apple-mobile-web-app-capable': 'yes' },
   icons: { apple: '/pwa/apple-touch-icon.png' },
+  /**
+   * تأییدِ مالکیتِ Google Search Console.
+   *
+   * ⚠️ توکن را **مالک** باید در `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` بگذارد؛
+   * هیچ توکنی در کد هاردکد نشده و هیچ مقدار جعلی‌ای ساخته نمی‌شود. اگر متغیر
+   * تنظیم نشده باشد، این فیلد اصلاً رندر نمی‌شود (بدون تگ خالی).
+   *
+   * دو راه دیگر هم موجود است و هیچ‌کدام نیاز به تغییر کد ندارد:
+   *   ۱. رکورد TXT در DNS دامنه (توصیه‌شده؛ مستقل از deploy فرانت)؛
+   *   ۲. فایل HTML تأیید در `apps/web/public/` — فایل فعلی
+   *      `public/23065741.txt` خالی (۰ بایت) است و تأیید نمی‌کند.
+   *
+   * پس از تأیید، `https://monshiim.ir/sitemap.xml` را در GSC ثبت کنید.
+   */
+  ...(process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION
+    ? {
+        verification: {
+          google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION,
+        },
+      }
+    : {}),
 };
 
 export const viewport: Viewport = {

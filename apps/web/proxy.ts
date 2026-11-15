@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { buildAuthHref, isPublicAuthPath } from './lib/auth';
+import { buildAuthHref } from './lib/auth';
 import { apiMayUseDifferentCookieHost } from './lib/auth-cookie-origin';
+import { classifyRoute, RETIRED_ROUTE_REDIRECTS } from './lib/route-access';
 
 /**
  * مسیرهای قدیمیِ «barber» → «provider».
@@ -32,6 +33,25 @@ const LEGACY_PATH_REDIRECTS = [
   { from: '/barber', to: '/provider' },
 ] as const;
 
+/**
+ * مسیرهای بازنشسته‌ای که **جایگزین** دارند و باید ۳۰۱ شوند.
+ *
+ * `/explore` صفحهٔ فهرستِ عمومیِ قدیمی بود که حذف شد و جایش را `/panel/explore`
+ * (خصوصی) گرفت. نتیجه این بود که URL قدیمی برای کاربر مهمان ۳۰۷ به `/login`
+ * می‌شد (`/login` هم در robots.txt مسدود است)؛ یعنی یک ریدایرکت به مقصدِ
+ * مسدود که هیچ سیگنال تمیزی به گوگل نمی‌دهد. اکنون که صفحهٔ فهرست عمومی
+ * (`/providers`) ساخته شده، همان مقصد درست و پایدار است.
+ */
+function retiredPathRedirect(request: NextRequest, pathname: string) {
+  for (const { from, to } of RETIRED_ROUTE_REDIRECTS) {
+    if (pathname !== from && !pathname.startsWith(`${from}/`)) continue;
+    const url = request.nextUrl.clone();
+    url.pathname = to + pathname.slice(from.length);
+    return NextResponse.redirect(url, 301);
+  }
+  return null;
+}
+
 function legacyPathRedirect(request: NextRequest, pathname: string) {
   for (const { from, to } of LEGACY_PATH_REDIRECTS) {
     if (pathname !== from && !pathname.startsWith(`${from}/`)) continue;
@@ -42,26 +62,33 @@ function legacyPathRedirect(request: NextRequest, pathname: string) {
   return null;
 }
 
+/** هدر هویتِ کلاینت هرگز قابل اعتماد نیست — حتی روی مسیرهای عمومی. */
+function nextWithoutIdentityHeader(request: NextRequest) {
+  const headers = new Headers(request.headers);
+  headers.delete('X-User-Payload');
+  return NextResponse.next({ request: { headers } });
+}
+
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+
+  const retiredRedirect = retiredPathRedirect(request, pathname);
+  if (retiredRedirect) return retiredRedirect;
 
   const legacyRedirect = legacyPathRedirect(request, pathname);
   if (legacyRedirect) return legacyRedirect;
 
-  // All public pages, including login, are accessible here. AuthProvider checks
-  // /auth/me before deciding whether to show the form or redirect. A signed JWT
-  // alone may represent a deleted/disabled user or have outdated roles.
-  if (isPublicAuthPath(pathname)) {
-    // Never trust a client-supplied identity header.
-    const publicHeaders = new Headers(request.headers);
-    publicHeaders.delete('X-User-Payload');
-    return NextResponse.next({ request: { headers: publicHeaders } });
-  }
+  const access = classifyRoute(pathname);
 
-  // Never trust a client-supplied identity header, including expired-token paths.
-  const headers = new Headers(request.headers);
-  headers.delete('X-User-Payload');
-  const next = () => NextResponse.next({ request: { headers } });
+  // مسیرهای عمومی (از جمله ورود/ثبت‌نام) بدون گیت عبور می‌کنند.
+  // AuthProvider وضعیت نشست را در سمت کلاینت تعیین می‌کند.
+  if (access === 'public') return nextWithoutIdentityHeader(request);
+
+  // مسیر ناموجود: درخواست را به روتر Next می‌دهیم تا ۴۰۴ واقعی برگردد.
+  // بدون این شاخه، هر URL اشتباه به `/login` می‌رفت (باگ سئوی سراسری).
+  if (access === 'unknown') return nextWithoutIdentityHeader(request);
+
+  // ── از این‌جا به بعد فقط مسیرهای خصوصیِ شناخته‌شده ──
   const token = request.cookies.get('access_token')?.value;
   const refreshToken = request.cookies.get('refresh_token')?.value;
 
@@ -81,7 +108,7 @@ export async function proxy(request: NextRequest) {
   }
   // If the browser talks to a different API host, its host-only cookies are
   // invisible here. Let the browser verify the session instead of assuming guest.
-  return next();
+  return nextWithoutIdentityHeader(request);
 }
 
 export const config = {

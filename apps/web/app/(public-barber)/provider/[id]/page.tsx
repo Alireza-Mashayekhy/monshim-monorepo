@@ -19,10 +19,12 @@ import BookingGate, {
   BookingTrigger,
 } from '@/components/public-barber/booking-gate';
 import PortfolioGallery from '@/components/public-barber/portfolio-gallery';
+import ProfileViewTracker from '@/components/public-barber/profile-view-tracker';
 import PublicReviews from '@/components/public-barber/public-reviews';
 import ShareButton from '@/components/public-barber/share-button';
 import { getActivityTypeLabel } from '@/constants/activity-types';
 import { publicImageUrl } from '@/lib/images';
+import { shouldIndexProfile } from '@/lib/profile-quality';
 import { absolutePublicImageUrl, fetchPublicApi } from '@/lib/public-api';
 import {
   normalizePublicPageSlug,
@@ -98,18 +100,39 @@ function resolveActivityText(activityType?: string | null): string | null {
   return label ? `ویژه ${label}` : activityType;
 }
 
+/**
+ * شهر/استانی که در متن آدرس تکرار نشده‌اند.
+ *
+ * قبلاً آدرس و موقعیت همیشه کنار هم می‌آمدند و در پروفایل‌هایی که شهر در
+ * خودِ آدرس نوشته شده (مثل «مراغه، خیابان اصلی») توضیحات به
+ * «مراغه، خیابان اصلی، مراغه، آذربایجان شرقی» تبدیل می‌شد — هم برای خواننده
+ * بد است، هم برای متای صفحه و توضیحات JSON-LD که همان رشته را استفاده می‌کنند.
+ */
+function locationNotInAddress(barber: PublicBarberProfile) {
+  const address = barber.address?.trim() ?? '';
+  return [barber.city?.name, barber.province?.name]
+    .filter((name): name is string => Boolean(name?.trim()))
+    .filter(name => !address.includes(name.trim()))
+    .join('، ');
+}
+
 function profileDescription(barber: PublicBarberProfile) {
-  const location = locationLabel(barber);
+  const extraLocation = locationNotInAddress(barber);
   const services = barber.services
     .slice(0, 3)
     .map(service => service.name)
     .join('، ');
 
-  const parts = [
-    barber.bio?.trim(),
-    location ? `نشانی: ${barber.address}، ${location}` : barber.address?.trim(),
-    services ? `خدمات: ${services}` : undefined,
-  ].filter(Boolean);
+  const address = barber.address?.trim();
+  const addressLine = address
+    ? `نشانی: ${extraLocation ? `${address}، ${extraLocation}` : address}`
+    : extraLocation
+      ? `نشانی: ${extraLocation}`
+      : undefined;
+
+  const parts = [barber.bio?.trim(), addressLine, services ? `خدمات: ${services}` : undefined].filter(
+    Boolean,
+  );
 
   return (
     parts.join(' ') || `مشاهده خدمات و اطلاعات ${barber.salonName} در منشیم.`
@@ -134,10 +157,22 @@ export async function generateMetadata({
   }
 
   const location = locationLabel(barber);
+
+  /**
+   * سیاستِ کیفیت (پیش‌فرض خاموش): اگر فعال باشد، پروفایل‌های نازک
+   * `noindex,follow` می‌گیرند اما همچنان قابل مشاهده و اشتراک‌گذاری‌اند.
+   * `sitemap` هم از همین تابع استفاده می‌کند تا این دو هرگز ناهماهنگ نشوند.
+   */
+  const indexable = shouldIndexProfile({
+    bioLength: (barber.bio ?? '').trim().length,
+    portfolioCount: (barber.portfolio ?? []).filter(Boolean).length,
+  });
+
   return buildPageMetadata({
     title: location ? `${barber.salonName} در ${location}` : barber.salonName,
     description: profileDescription(barber),
     path: providerPath(barber.slug),
+    noIndex: !indexable,
     imageUrl: absolutePublicImageUrl(barber.profileImage),
   });
 }
@@ -174,6 +209,50 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
     },
   }));
 
+  /**
+   * تصاویرِ واقعیِ پروفایل (کاور + نمونه‌کارها) به‌صورت مطلق.
+   * فقط چیزی که کاربر روی همین صفحه می‌بیند؛ هیچ تصویرِ ساخته‌شده‌ای اضافه
+   * نمی‌شود. برای `ImageObject` هم اندازهٔ واقعی نداریم، پس رشتهٔ ساده
+   * (که Google می‌پذیرد) می‌فرستیم.
+   */
+  const schemaImages = [
+    absolutePublicImageUrl(barber.profileImage),
+    ...(barber.portfolio ?? [])
+      .slice(0, 12)
+      .map(image => absolutePublicImageUrl(image)),
+  ].filter((url): url is string => Boolean(url));
+
+  /**
+   * `priceRange` فقط از قیمت‌های واقعیِ خدماتِ فعال ساخته می‌شود.
+   * اگر خدمتی قیمت نداشته باشد، این فیلد حذف می‌شود (نه مقدار جعلی).
+   */
+  const pricedServices = barber.services
+    .map(service => Number(service.price))
+    .filter(price => Number.isFinite(price) && price > 0);
+  const priceRange =
+    pricedServices.length > 0
+      ? `${toPersianDigits(
+          Math.min(...pricedServices).toLocaleString('fa-IR'),
+        )} تا ${toPersianDigits(
+          Math.max(...pricedServices).toLocaleString('fa-IR'),
+        )} تومان`
+      : null;
+
+  /**
+   * نوعِ موجودیت.
+   *
+   * پیش‌تر همهٔ پروفایل‌ها `HairSalon` بودند — حتی آرایشگرِ میکاپ و
+   * ناخن‌کاری. `HairSalon` تعهدِ معناییِ «آرایشگاه مو» است و برای سالن
+   * زیبایی/میکاپ نادرست است؛ Google هم نوعِ نامنطبق را جریمه می‌کند.
+   *
+   * چون دسته‌بندیِ کسب‌وکار در مدل داده وجود ندارد (فقط `activityType` که
+   * مخاطبِ جنسیتی است، نه نوعِ خدمات)، از نوعِ چتریِ درست استفاده می‌کنیم که
+   * برای همهٔ این حرفه‌ها صادق است: `HealthAndBeautyBusiness` (والدِ
+   * `HairSalon` و `BeautySalon`). انتخابِ نوعِ دقیق‌تر نیازمند یک فیلد
+   * دستهٔ کسب‌وکار در پروفایل است (تصمیم کسب‌وکار، در گزارش ثبت شده).
+   */
+  const businessType = 'HealthAndBeautyBusiness';
+
   const salonSchema = {
     '@context': 'https://schema.org',
     '@type': 'ProfilePage',
@@ -184,11 +263,13 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
     inLanguage: 'fa-IR',
     isPartOf: { '@id': `${siteConfig.url}/#website` },
     mainEntity: {
-      '@type': 'HairSalon',
-      '@id': `${profileUrl}#salon`,
+      '@type': businessType,
+      '@id': `${profileUrl}#business`,
       name: barber.salonName,
       url: profileUrl,
-      ...(heroImage ? { image: heroImage } : {}),
+      ...(schemaImages.length > 0 ? { image: schemaImages } : {}),
+      ...(priceRange ? { priceRange } : {}),
+      description: profileDescription(barber),
       ...(barber.address || barber.city || barber.province
         ? {
             address: {
@@ -237,9 +318,17 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
         name: siteConfig.name,
         item: siteConfig.url,
       },
+      // مسیر کشف: صفحهٔ اصلی ← فهرست آرایشگاه‌ها ← پروفایل. این گامِ میانی هم
+      // لینکِ داخلیِ واقعی به فهرست عمومی است و هم با breadcrumb دیداری یکی است.
       {
         '@type': 'ListItem',
         position: 2,
+        name: 'فهرست آرایشگاه‌ها',
+        item: `${siteConfig.url}/providers`,
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
         name: barber.salonName,
         item: profileUrl,
       },
@@ -250,12 +339,19 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
     <BookingGate bookingUrl={bookingUrl} salonName={barber.salonName}>
       <JsonLd data={[salonSchema, breadcrumbSchema]} />
 
+      <ProfileViewTracker
+        slug={barber.slug}
+        hasPortfolio={(barber.portfolio?.length ?? 0) > 0}
+        hasReviews={reviewCount > 0}
+      />
+
       <div className="mx-auto w-full max-w-2xl px-4 pb-28 pt-2 sm:px-6">
         {/* بردکرامب بالای صفحه (بدون هدر و فوتر عمومی) */}
         <div className="[&>nav]:px-1 [&>nav]:py-4">
           <Breadcrumbs
             items={[
               { href: '/', label: siteConfig.name },
+              { href: '/providers', label: 'فهرست آرایشگاه‌ها' },
               { href: providerPath(barber.slug), label: barber.salonName },
             ]}
           />

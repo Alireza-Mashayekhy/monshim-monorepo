@@ -1,6 +1,6 @@
 import { revalidatePath, revalidateTag } from 'next/cache';
 
-import { PUBLIC_API_CACHE_TAG } from './public-cache-tags';
+import { BLOG_CACHE_TAG, PUBLIC_API_CACHE_TAG } from './public-cache-tags';
 import { validatePublicPageSlug } from './public-page-slug';
 
 /**
@@ -38,7 +38,7 @@ export interface BarberPublicCacheTarget {
 }
 
 /** مسیرهای ثابتی که فهرست/خلاصهٔ آرایشگرها را نشان می‌دهند. */
-const SHARED_PATHS = ['/', '/panel/explore', '/sitemap.xml'] as const;
+const SHARED_PATHS = ['/', '/providers', '/panel/explore', '/sitemap.xml'] as const;
 
 /** مسیرهای داینامیکِ پروفایل که با الگو پاک می‌شوند (بدون نیاز به اسلاگ). */
 const DYNAMIC_ROUTE_PATTERNS = [
@@ -129,4 +129,56 @@ export function revalidateBarberPublicCache(
   }
 
   return ok;
+}
+
+/**
+ * پاک‌سازیِ کشِ بلاگ.
+ *
+ * دادهٔ بلاگ با تگ `BLOG_CACHE_TAG` و بازهٔ ۳۰۰ ثانیه کش می‌شود
+ * (`lib/blog/server.ts`). وقتی مقاله‌ای منتشر/ویرایش/حذف می‌شود، بک‌اند
+ * `notifyBlogChanged` را صدا می‌زند و این تابع تگ را فوراً منقضی می‌کند.
+ *
+ * `expire: 0` عمداً استفاده می‌شود تا اولین بازدیدِ بعد از انتشار، نسخهٔ تازه
+ * را ببیند (نه stale-while-revalidate).
+ */
+export function revalidateBlogCache(target: {
+  slugs?: Array<string | null | undefined>;
+} = {}): boolean {
+  let ok = true;
+
+  ok = safeRun('path:/blog', () => revalidatePath('/blog')) && ok;
+  ok =
+    safeRun('path:/blog/[slug]', () => revalidatePath('/blog/[slug]', 'page')) &&
+    ok;
+
+  for (const candidate of target.slugs ?? []) {
+    if (typeof candidate !== 'string') continue;
+    const slug = candidate.trim();
+    if (!slug) continue;
+    ok = safeRun(`path:/blog/${slug}`, () => revalidatePath(`/blog/${slug}`)) && ok;
+  }
+
+  ok =
+    safeRun(`tag:${BLOG_CACHE_TAG}`, () =>
+      revalidateTag(BLOG_CACHE_TAG, { expire: 0 }),
+    ) && ok;
+
+  return ok;
+}
+
+/** فقط تگ‌هایی که در کد تعریف شده‌اند؛ ورودیِ وبهوک هرگز مستقیم به کش نمی‌رود. */
+const ALLOWED_TAGS: Record<string, () => void> = {
+  [PUBLIC_API_CACHE_TAG]: () =>
+    revalidateTag(PUBLIC_API_CACHE_TAG, { expire: 0 }),
+  [BLOG_CACHE_TAG]: () => revalidateTag(BLOG_CACHE_TAG, { expire: 0 }),
+};
+
+export function isAllowedCacheTag(tag: string) {
+  return Object.hasOwn(ALLOWED_TAGS, tag);
+}
+
+export function revalidateCacheTag(tag: string): boolean {
+  const action = ALLOWED_TAGS[tag];
+  if (!action) return false;
+  return safeRun(`tag:${tag}`, action);
 }

@@ -13,6 +13,7 @@ import {
   OneToOne,
   PrimaryGeneratedColumn,
   Unique,
+  UpdateDateColumn,
 } from 'typeorm';
 
 import { BarberReview } from './barber-review.entity';
@@ -196,6 +197,27 @@ export class BarberProfile {
     default: () => 'CURRENT_TIMESTAMP',
   })
   createdAt: Date;
+
+  /**
+   * آخرین تغییرِ محتواییِ پروفایل (نام سالن، بیو، آدرس، نمونه‌کار، خدمات…).
+   *
+   * چرا لازم شد؟ `sitemap` برای `lastmod` صفحهٔ هر آرایشگر قبلاً از
+   * `MAX(purchase.createdAt)` یا `MAX(booking.updatedAt)` استفاده می‌کرد؛ یعنی
+   * «فعالیت رزرو» را به‌جای «تغییر محتوا» اعلام می‌کرد: سالنی که بیو و
+   * نمونه‌کارهایش را کامل بازنویسی می‌کرد هیچ سیگنال تازگی نمی‌گرفت و سالنی که
+   * فقط رزرو می‌گرفت، بی‌دلیل «تازه» می‌شد.
+   *
+   * `nullable` است چون ردیف‌های موجود در محیط production تا اجرای
+   * `sql/barber-profile-updated-at.sql` مقدار ندارند؛ در آن حالت کد به
+   * `createdAt` برمی‌گردد.
+   */
+  @UpdateDateColumn({
+    name: 'updated_at',
+    type: 'datetime',
+    precision: 6,
+    nullable: true,
+  })
+  updatedAt: Date | null;
 
   // کد معرف برای دعوت آرایشگرهای دیگر
   @Column({

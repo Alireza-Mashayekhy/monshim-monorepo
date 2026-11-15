@@ -73,6 +73,41 @@ export function buildPageMetadata({
   };
 }
 
+/**
+ * ادغامِ تصمیمِ صفحه با `robots` ساخته‌شده در `buildPageMetadata`.
+ *
+ * قبلاً صفحهٔ مقاله مستقیم `robots: { index, follow }` می‌نوشت و در نتیجه کلِ
+ * آبجکتِ پیش‌فرض — به‌ویژه `googleBot` با `max-image-preview: large` و
+ * `max-snippet: -1` — فقط روی مقاله‌ها از بین می‌رفت. این تابع همان ادغام را
+ * در یک نقطهٔ تست‌پذیر انجام می‌دهد: پیش‌فرض‌های سراسری حفظ می‌شوند و تنها
+ * `index`/`follow` بازنویسی می‌شوند.
+ *
+ * `undefined` یعنی «داده‌ای نداریم»، نه «نه»؛ در آن حالت پیش‌فرضِ ایمن
+ * (ایندکس شود) حفظ می‌شود تا یک فیلدِ جاافتاده در پاسخ API باعث حذف تگ
+ * robots از مقالهٔ سالم نشود.
+ */
+export function mergeRobotsDecision(
+  base: Metadata['robots'],
+  decision: { indexable?: boolean | null; follow?: boolean | null },
+) {
+  const baseRobots =
+    typeof base === 'object' && base !== null ? base : ({} as Record<string, never>);
+  const baseGoogleBot =
+    typeof baseRobots.googleBot === 'object' && baseRobots.googleBot !== null
+      ? baseRobots.googleBot
+      : ({} as Record<string, never>);
+
+  const index = decision.indexable !== false;
+  const follow = decision.follow !== false;
+
+  return {
+    ...baseRobots,
+    index,
+    follow,
+    googleBot: { ...baseGoogleBot, index, follow },
+  };
+}
+
 export function faqPageSchema(
   items: readonly { question: string; answer: string }[],
 ) {

@@ -8,6 +8,8 @@ export const siteConfig = {
   locale: 'fa_IR',
   routes: {
     home: '/',
+    /** فهرست عمومی آرایشگاه‌ها (بدون نیاز به ورود) */
+    providers: '/providers',
     providerManagement: '/provider-management',
     onlineBooking: '/online-provider-booking',
     pricing: '/pricing',

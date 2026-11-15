@@ -17,6 +17,7 @@ import { Suspense, useEffect, useRef } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { revalidateMyPublicBarberPage } from '@/lib/actions/public-page';
+import { trackEventOnce } from '@/lib/analytics';
 import { formatPrice } from '@/lib/utils';
 
 const toPersianDigits = (num: number | string): string => {
@@ -99,6 +100,24 @@ function PaymentCallbackContent() {
     revalidateRan.current = true;
     void revalidateMyPublicBarberPage();
   }, [isSuccess, purpose]);
+
+  // پرداختِ موفق — یک بار در هر نشست (کلید بر اساس trackId که شناسهٔ داخلی
+  // تراکنش است و در URL همین صفحه از قبل وجود دارد). هیچ مبلغ/شماره کارتی
+  // ارسال نمی‌شود.
+  useEffect(() => {
+    if (!isSuccess) return;
+    const purposeKey: 'booking' | 'deposit' | 'public_page' =
+      purpose === 'PUBLIC_PAGE'
+        ? 'public_page'
+        : purpose === 'BOOKING'
+          ? 'booking'
+          : 'deposit';
+    trackEventOnce(
+      `payment:${trackId ?? purpose ?? 'unknown'}`,
+      'payment_completed',
+      { purpose: purposeKey },
+    );
+  }, [isSuccess, purpose, trackId]);
 
   return (
     <div className="min-h-screen  flex items-center justify-center p-4">

@@ -2,7 +2,12 @@ import { timingSafeEqual } from 'node:crypto';
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { revalidateBarberPublicCache } from '@/lib/public-cache';
+import {
+  isAllowedCacheTag,
+  revalidateBarberPublicCache,
+  revalidateBlogCache,
+  revalidateCacheTag,
+} from '@/lib/public-cache';
 
 /**
  * وبهوکِ on-demand revalidation برای بک‌اند.
@@ -16,8 +21,12 @@ import { revalidateBarberPublicCache } from '@/lib/public-cache';
  * فعال‌سازی: در هر دو سرویس `REVALIDATE_SECRET` هم‌مقدار باشد. اگر تنظیم
  * نشده باشد این مسیر ۵۰۳ می‌دهد (هرگز بدون احراز هویت کش پاک نمی‌شود).
  *
- * نمونهٔ بدنه:
- *   { "userId": 42, "slugs": ["salon-royal"] }
+ * نمونهٔ بدنه‌ها:
+ *   پروفایل آرایشگر: { "userId": 42, "slugs": ["salon-royal"] }
+ *   بلاگ:            { "paths": ["/blog", "/blog/foo"], "tags": ["blog-api-data"] }
+ *
+ * `paths` فقط مسیرهای داخلی (`/...`) و `tags` فقط تگ‌های تعریف‌شده در
+ * `lib/public-cache-tags.ts` را می‌پذیرد؛ ورودیِ خام هرگز به کش نمی‌رسد.
  */
 export const dynamic = 'force-dynamic';
 
@@ -55,12 +64,45 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as {
     userId?: number | string | null;
     slugs?: Array<string | null | undefined>;
+    paths?: Array<string | null | undefined>;
+    tags?: Array<string | null | undefined>;
   } | null;
+
+  const paths = (Array.isArray(body?.paths) ? body.paths : [])
+    .filter((path): path is string => typeof path === 'string')
+    // مسیرهای داینامیک/خارجی رد می‌شوند؛ فقط مسیر داخلیِ مطلق مجاز است.
+    .filter(path => path.startsWith('/') && !path.startsWith('//'))
+    .slice(0, 20);
+
+  const tags = (Array.isArray(body?.tags) ? body.tags : [])
+    .filter(
+      (tag): tag is string =>
+        typeof tag === 'string' && isAllowedCacheTag(tag),
+    )
+    .slice(0, 10);
 
   const ok = revalidateBarberPublicCache({
     userId: body?.userId ?? null,
     slugs: Array.isArray(body?.slugs) ? body.slugs : [],
+    extraPaths: paths,
   });
 
-  return NextResponse.json({ revalidated: ok, now: Date.now() });
+  const blogOk =
+    paths.some(path => path.startsWith('/blog')) || tags.length > 0;
+  const blogRevalidated = blogOk
+    ? revalidateBlogCache({
+        slugs: paths
+          .filter(path => path.startsWith('/blog/'))
+          .map(path => path.slice('/blog/'.length)),
+      })
+    : true;
+
+  const tagResults = tags.map(tag => revalidateCacheTag(tag));
+
+  return NextResponse.json({
+    revalidated: ok && blogRevalidated && tagResults.every(Boolean),
+    paths,
+    tags,
+    now: Date.now(),
+  });
 }

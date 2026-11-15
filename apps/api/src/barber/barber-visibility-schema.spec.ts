@@ -2,10 +2,16 @@ import { BarberService } from './barber.service';
 
 /** Production does not use TypeORM synchronize. */
 describe('barber public-visibility schema', () => {
+  /**
+   * ستون‌هایی که در productionِ «قبل از این تغییر» وجود دارند.
+   * `updated_at` هم از قبل هست تا تست‌های این فایل فقط روی رفتارِ ستون
+   * نمایش عمومی تمرکز کنند؛ ساختِ `updated_at` تستِ جدا دارد.
+   */
   const oldColumns = [
     { COLUMN_NAME: 'pending_changes' },
     { COLUMN_NAME: 'pending_status' },
     { COLUMN_NAME: 'pending_rejection_reason' },
+    { COLUMN_NAME: 'updated_at' },
   ];
 
   function setup(columns = oldColumns, alterError?: Error & { code?: string }) {
@@ -63,5 +69,36 @@ describe('barber public-visibility schema', () => {
     });
     const { service } = setup(oldColumns, denied);
     await expect(service.onModuleInit()).rejects.toBe(denied);
+  });
+
+  it('adds updated_at (lastmod source) and backfills it when missing', async () => {
+    const { service, profileRepo } = setup([
+      ...oldColumns.filter(column => column.COLUMN_NAME !== 'updated_at'),
+      { COLUMN_NAME: 'is_publicly_visible' },
+    ]);
+    await service.onModuleInit();
+
+    expect(profileRepo.query).toHaveBeenCalledWith(
+      'ALTER TABLE `barber_profile` ADD COLUMN `updated_at` DATETIME(6) NULL',
+    );
+    expect(
+      profileRepo.query.mock.calls.some(([sql]) =>
+        /^UPDATE `barber_profile` SET `updated_at` = `created_at`/i.test(sql),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not touch updated_at when the column already exists', async () => {
+    const { service, profileRepo } = setup([
+      ...oldColumns,
+      { COLUMN_NAME: 'is_publicly_visible' },
+    ]);
+    await service.onModuleInit();
+
+    expect(
+      profileRepo.query.mock.calls.some(([sql]) =>
+        /updated_at/i.test(String(sql)),
+      ),
+    ).toBe(false);
   });
 });

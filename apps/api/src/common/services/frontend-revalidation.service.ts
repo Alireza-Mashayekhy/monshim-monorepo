@@ -13,6 +13,11 @@ export interface BarberProfileChangedPayload {
   slugs?: Array<string | null | undefined>;
 }
 
+export interface BlogChangedPayload {
+  /** نامک مقاله‌ای که منتشر/ویرایش/حذف شده است. */
+  slug?: string | null;
+}
+
 const REQUEST_TIMEOUT_MS = 5_000;
 
 /**
@@ -119,6 +124,50 @@ export class FrontendRevalidationService {
         // خطای شبکه/۴۰۱ نباید در مسیر تایید پروفایل دیده شود؛ فقط لاگ.
         this.logger.warn(
           `پاک‌سازی کش صفحهٔ عمومی آرایشگر ${userId} در فرانت ناموفق بود: ${
+            axios.isAxiosError(error)
+              ? `${error.response?.status ?? ''} ${error.message}`.trim()
+              : String(error)
+          }`,
+        );
+      });
+  }
+
+  /**
+   * اعلام انتشار/ویرایش/حذف یک مقالهٔ بلاگ.
+   *
+   * صفحه‌های `/blog` و `/blog/[slug]` در فرانت با ISR (۳۰۰ ثانیه) و تگ
+   * `blog-api-data` کش می‌شوند. بدون این اطلاع‌رسانی، مقالهٔ تازه‌منتشرشده تا
+   * ۵ دقیقه در فهرست بلاگ دیده نمی‌شد و ویرایش متن هم همان‌قدر عقب می‌افتاد.
+   *
+   * مانند `notifyBarberProfileChanged` عمداً `void` است: شکست شبکهٔ فرانت
+   * نباید ذخیرهٔ مقاله در پنل ادمین را خراب کند.
+   */
+  notifyBlogChanged(payload: BlogChangedPayload = {}): void {
+    const config = this.endpoint;
+    if (!config) return;
+
+    const slug = typeof payload.slug === 'string' ? payload.slug.trim() : '';
+
+    // `tags` نامِ تگ‌های مجازِ فرانت است؛ همان مقدار ثابت
+    // `BLOG_CACHE_TAG` در `apps/web/lib/public-cache-tags.ts`.
+    void axios
+      .post(
+        config.url,
+        {
+          paths: slug ? ['/blog', `/blog/${slug}`] : ['/blog'],
+          tags: ['blog-api-data'],
+        },
+        {
+          timeout: REQUEST_TIMEOUT_MS,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-revalidate-secret': config.secret,
+          },
+        },
+      )
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `پاک‌سازی کش بلاگ در فرانت ناموفق بود: ${
             axios.isAxiosError(error)
               ? `${error.response?.status ?? ''} ${error.message}`.trim()
               : String(error)

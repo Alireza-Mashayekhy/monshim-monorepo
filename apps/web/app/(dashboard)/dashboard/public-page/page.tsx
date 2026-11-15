@@ -30,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebounce } from '@/hooks/use-debounce';
 import { revalidateMyPublicBarberPage } from '@/lib/actions/public-page';
+import { trackEventOnce } from '@/lib/analytics';
 import { getApiErrorMessage } from '@/lib/api-error';
 import {
   MAX_PUBLIC_PAGE_SLUG_LENGTH,
@@ -136,6 +137,11 @@ export default function PublicPagePage() {
     try {
       const response = await updateSlug.mutateAsync(localValidation.slug);
       const savedSlug = response.data?.slug ?? localValidation.slug;
+      // لحظه‌ای که صفحه برای اولین بار واقعاً قابل مشاهده می‌شود = انتشار.
+      trackEventOnce(`profile-published:${savedSlug}`, 'provider_profile_published', {
+        activation:
+          status?.reason === 'PAID_BOOKINGS' ? 'paid_bookings' : 'package',
+      });
       void revalidateMyPublicBarberPage([currentSlug, savedSlug]);
       setSlugDraft('');
       toast.success('آدرس اختصاصی شما ثبت شد و از این پس قابل تغییر نیست');

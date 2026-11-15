@@ -19,6 +19,12 @@ export const NAV_LINKS: NavLink[] = [
     hint: 'مقاله‌ها و راهنماها',
   },
   {
+    href: siteConfig.routes.providers,
+    label: 'آرایشگاه‌ها',
+    title: 'فهرست آرایشگاه‌ها و سالن‌های زیبایی منشیم',
+    hint: 'دیدن آرایشگاه‌های فعال و نوبت‌گیری',
+  },
+  {
     href: siteConfig.routes.onlineBooking,
     label: 'برای مشتریان',
     title: 'رزرو آنلاین آرایشگاه و نوبت دهی اینترنتی در منشیم',
@@ -55,6 +61,11 @@ export const SEO_LINKS: NavLink[] = [
     href: siteConfig.routes.home,
     label: 'منشیم',
     title: 'منشیم | سامانه رزرو آنلاین آرایشگاه',
+  },
+  {
+    href: siteConfig.routes.providers,
+    label: 'فهرست آرایشگاه‌ها',
+    title: 'فهرست آرایشگاه‌ها و سالن‌های زیبایی منشیم',
   },
   {
     href: siteConfig.routes.providerManagement,

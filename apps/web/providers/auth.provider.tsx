@@ -13,9 +13,9 @@ import {
   getAuthDestination,
   getRoleLandingPath,
   isAuthPagePath,
-  isPublicAuthPath,
   SESSION_EXPIRED_EVENT,
 } from '@/lib/auth';
+import { requiresAuth } from '@/lib/route-access';
 import { clearSessionCache } from '@/lib/session-cache';
 import { resolveSessionGate, shouldCheckSession } from '@/lib/session-policy';
 import { useMe } from '@/services/features/auth/hooks';
@@ -30,7 +30,10 @@ export default function AuthProvider({
   const router = useRouter();
   const queryClient = useQueryClient();
   const setUser = useAuthStore(state => state.setUser);
-  const isPublicPath = isPublicAuthPath(pathname);
+  // تنها مسیرهای خصوصیِ شناخته‌شده گیت می‌شوند. مسیرهای ناموجود (۴۰۴) هم
+  // مثل مسیرهای عمومی‌اند: نباید کاربر مهمان را از یک صفحهٔ ۴۰۴ به `/login`
+  // بفرستند — همان باگی که سمت سرور در `proxy.ts` رفع شد.
+  const isPublicPath = !requiresAuth(pathname);
   const isAuthPage = isAuthPagePath(pathname);
   const checkSession = shouldCheckSession(isPublicPath, isAuthPage);
   const { data, isPending, isError, error, refetch, isFetching } = useMe({
