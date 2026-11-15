@@ -1,4 +1,7 @@
-import { getImageUploadError } from '@/lib/image-upload';
+import {
+  getImageUploadError,
+  safeUploadFileName,
+} from '@/lib/image-upload';
 import { api } from '@/services/api/client';
 import { endpoints } from '@/services/api/endpoints';
 import { ApiListResponse, ApiSingleResponse } from '@/services/api/types';
@@ -64,7 +67,10 @@ export const uploadProfileImage = async (file: File): Promise<string> => {
   const validationError = getImageUploadError(file);
   if (validationError) throw new Error(validationError);
   const formData = new FormData();
-  formData.append('image', file);
+  // نام فایل حفظ می‌شود: بک‌اند پسوند `originalname` را اعتبارسنجی می‌کند و
+  // MIME را از همان می‌گیرد. FormData بدون نام، خطای «فرمت فایل مجاز نیست»
+  // می‌گرفت.
+  formData.append('image', file, safeUploadFileName(file.name, 'profile'));
   const { data } = await api.post(
     endpoints.barber.updateProfileImage,
     formData,
@@ -73,7 +79,15 @@ export const uploadProfileImage = async (file: File): Promise<string> => {
     },
   );
   const payload = data?.data ?? data;
-  return payload?.imageUrl;
+  const imageUrl = payload?.imageUrl;
+  /**
+   * پاسخ نامعتبر سرور باید خطای روشن بدهد، نه یک `undefined` که بعداً به
+   * `<Image src={undefined}>` تبدیل شود و تصویر شکسته بسازد.
+   */
+  if (typeof imageUrl !== 'string' || !imageUrl.trim()) {
+    throw new Error('پاسخ سرور برای آپلود عکس پروفایل نامعتبر بود.');
+  }
+  return imageUrl;
 };
 
 export const updateBarberPortfolio = async (

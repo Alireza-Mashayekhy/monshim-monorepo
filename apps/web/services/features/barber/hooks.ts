@@ -7,6 +7,7 @@ import {
 import { toast } from 'sonner';
 
 import { revalidateMyPublicBarberPage } from '@/lib/actions/public-page';
+import { getApiErrorMessage } from '@/lib/api-error';
 import type { ApiListResponse, ApiSingleResponse } from '@/services/api/types';
 
 import {
@@ -249,8 +250,10 @@ export const useUploadProfileImage = () => {
         toast.success('عکس پروفایل با موفقیت آپلود شد.');
       }
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'خطا در آپلود عکس');
+    onError: (error: unknown) => {
+      // الگوی یکسان مدیریت خطا: پیام فارسیِ سرور، و در غیر آن پیام دقیق
+      // شبکه/تایم‌اوت/۵xx — بدون افشای جزئیات داخلی.
+      toast.error(getApiErrorMessage(error, 'خطا در آپلود عکس'));
     },
   });
 };
@@ -270,9 +273,9 @@ export const useUpdateBarberPortfolio = () => {
         toast.success('نمونه‌کارها با موفقیت به‌روزرسانی شدند.');
       }
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
       toast.error(
-        error.response?.data?.message || 'خطا در به‌روزرسانی نمونه‌کارها',
+        getApiErrorMessage(error, 'خطا در به‌روزرسانی نمونه‌کارها'),
       );
     },
   });

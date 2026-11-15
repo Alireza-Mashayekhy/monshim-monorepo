@@ -27,6 +27,7 @@ import { AuthGuard } from 'src/common/guards/auth.guard';
 import {
   normalizeNumberValue,
   toEnglishDigits,
+  toPersianDigits,
 } from 'src/common/utils/digits.util';
 import { FilesService } from 'src/files/files.service';
 import { Repository } from 'typeorm';
@@ -133,15 +134,24 @@ export class BarberController {
     // ذخیره فایل در پوشه profiles
     const imagePath = await this.filesService.saveFile(file, 'profiles');
 
-    // به‌روزرسانی پروفایل کاربر
-    const updatedProfile = await this.barberService.update(user.id, {
-      profileImage: imagePath,
-    });
+    /**
+     * اگر به‌روزرسانی پروفایل شکست بخورد، فایل تازه باید پاک شود؛ وگرنه هر
+     * تلاش ناموفق یک فایل یتیم روی دیسک باقی می‌گذارد (با هزینهٔ فضا و
+     * بدون هیچ ارجاعی در دیتابیس).
+     */
+    try {
+      const updatedProfile = await this.barberService.update(user.id, {
+        profileImage: imagePath,
+      });
 
-    return {
-      imageUrl: imagePath,
-      pendingStatus: updatedProfile.pendingStatus,
-    };
+      return {
+        imageUrl: imagePath,
+        pendingStatus: updatedProfile.pendingStatus,
+      };
+    } catch (error) {
+      this.filesService.deleteFiles([imagePath]);
+      throw error;
+    }
   }
 
   @Patch('profile/portfolio')
@@ -201,22 +211,61 @@ export class BarberController {
       );
     }
 
+    /**
+     * سقف تعداد، بر اساس «تعداد نهایی» سنجیده می‌شود، نه مجموع حفظ‌شده‌ها و
+     * فایل‌های تازه.
+     *
+     * چرا؟ کاربر باید بتواند عکس‌های قبلی را حذف و عکس جدید اضافه کند (یعنی
+     * «جایگزینی»). با شرط قبلی (`kept + uploaded <= 5`) وقتی ۵ عکس داشت و
+     * یکی را حذف می‌کرد، باز هم نمی‌توانست عکس جدید بفرستد؛ در حالی که
+     * پروفایل هرگز بیشتر از ۵ عکس نمی‌گرفت. حالا فقط نتیجهٔ نهایی مهم است.
+     */
     if (
       keptImages.length + uploadedFiles.length >
       MAX_BARBER_PORTFOLIO_IMAGES
     ) {
       throw new BadRequestException(
-        `حداکثر ${MAX_BARBER_PORTFOLIO_IMAGES} نمونه‌کار مجاز است`,
+        `حداکثر ${MAX_BARBER_PORTFOLIO_IMAGES} نمونه‌کار مجاز است؛ ` +
+          `${keptImages.length} عکس حفظ شده و ${uploadedFiles.length} فایل جدید ارسال شده است`,
       );
     }
 
     const uploadedPaths: string[] = [];
 
     try {
-      for (const file of uploadedFiles) {
-        uploadedPaths.push(await this.filesService.saveFile(file, 'portfolio'));
+      /**
+       * هر فایل جداگانه ذخیره و خطایش به همان فایل نسبت داده می‌شود.
+       * پیام خطا نام فایل را می‌آورد تا کاربر بداند «کدام» عکس مشکل داشته؛
+       * بدون افشای مسیر داخلی سرور یا stack trace.
+       */
+      for (const [index, file] of uploadedFiles.entries()) {
+        try {
+          uploadedPaths.push(
+            await this.filesService.saveFile(file, 'portfolio'),
+          );
+        } catch (error) {
+          // شمارهٔ فایل با ارقام فارسی نوشته می‌شود تا با بقیهٔ پیام‌های
+          // کاربرپسند سایت یک‌دست باشد.
+          const fileLabel =
+            uploadedFiles.length > 1
+              ? `فایل شماره ${toPersianDigits(index + 1)}: `
+              : '';
+          throw new BadRequestException(
+            `${fileLabel}${
+              error instanceof Error && error.message
+                ? error.message
+                : 'فایل ارسالی معتبر نیست'
+            }`,
+          );
+        }
       }
 
+      /**
+       * اگر همان لحظه عکسی توسط آرایشگر از تب دیگری حذف شده باشد
+       * (`allowedImages` قدیمی شده باشد)، `updatePortfolioImages` خطای
+       * «پروفایل یافت نشد»/ناسازگاری می‌دهد. در آن حالت فایل‌های تازه پاک
+       * می‌شوند تا فایل یتیم نمانند.
+       */
       const nextImages = [...keptImages, ...uploadedPaths];
       const updatedProfile = await this.barberService.updatePortfolioImages(
         user.id,

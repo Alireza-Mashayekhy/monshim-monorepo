@@ -50,6 +50,7 @@ import { LoginWithPasswordDto } from './dto/login-with-password.dto';
 import { RegisterBarberDto } from './dto/register-barber.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { SendVerifyOtp } from './dto/verify-otp.dto';
+import type { RegisterBarberOutcome } from './register-barber-outcome';
 
 const INVALID_REFRESH_TOKEN_MESSAGE = 'توکن تازه‌سازی نامعتبر است';
 const EXPIRED_SESSION_MESSAGE =
@@ -191,7 +192,11 @@ export class AuthService {
     return { message: 'ورود با موفقیت انجام شد', data: { newUser: false } };
   }
 
-  async registerBarber(dto: RegisterBarberDto, response: Response) {
+  async registerBarber(
+    dto: RegisterBarberDto,
+    response: Response,
+    outcome?: RegisterBarberOutcome,
+  ) {
     const existingUser = await this.usersService.findWithPhone(dto.phone);
     if (existingUser) {
       throw new ConflictException(PHONE_ALREADY_REGISTERED_MESSAGE);
@@ -294,6 +299,13 @@ export class AuthService {
       this.logger.error(`registerBarber failed: ${String(error)}`);
       throw error;
     }
+
+    /**
+     * مرز مهم: از این‌جا به بعد کاربر و پروفایل در دیتابیس هستند و مسیر
+     * فایل‌های آپلودی ذخیره شده است. کنترلر با این پرچم می‌فهمد که در صورت
+     * خطای بعدی نباید فایل‌ها را پاک کند.
+     */
+    if (outcome) outcome.persisted = true;
 
     // ۵. ارسال اعلان ثبت‌نام آرایشگر جدید به ربات بله (جهت بررسی و تایید ادمین)
     void this.baleNotificationService?.notifyBarberRegistered?.(user.id);

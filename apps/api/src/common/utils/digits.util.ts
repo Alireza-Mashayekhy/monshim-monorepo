@@ -37,6 +37,16 @@ export function normalizeNumberValue(value: unknown): unknown {
 }
 
 /**
+ * تبدیل ارقام انگلیسی به فارسی — برای پیام‌های نمایشی (نه برای محاسبه).
+ *
+ * چرا در سرور لازم است؟ پیام‌های API به کاربر فارسی‌زبان نشان داده می‌شوند و
+ * قاطی شدن «۲» و «2» در یک جمله، کیفیت پیام را پایین می‌آورد.
+ */
+export function toPersianDigits(input: number | string): string {
+  return String(input).replace(/\d/g, digit => '۰۱۲۳۴۵۶۷۸۹'[Number(digit)]);
+}
+
+/**
  * دکوراتور DTO برای تبدیل ارقام فارسی/عربی به انگلیسی در فیلدهای رشته‌ای
  */
 export function NormalizeDigits(): PropertyDecorator {

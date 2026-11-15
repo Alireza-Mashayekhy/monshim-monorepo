@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Post,
   Req,
   Res,
@@ -31,6 +32,7 @@ import { LoginWithPasswordDto } from './dto/login-with-password.dto';
 import { RegisterBarberDto } from './dto/register-barber.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { SendVerifyOtp } from './dto/verify-otp.dto';
+import type { RegisterBarberOutcome } from './register-barber-outcome';
 
 interface RegisterBarberFiles {
   profileImage?: Express.Multer.File[];
@@ -39,6 +41,8 @@ interface RegisterBarberFiles {
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly filesService: FilesService,
@@ -135,6 +139,18 @@ export class AuthController {
   ) {
     const dto = rawDto as RegisterBarberDto;
     const savedFiles: string[] = [];
+    /**
+     * وضعیت «آیا پروفایل در دیتابیس ثبت شده است؟».
+     *
+     * این دو خطای متفاوت باید دو رفتار متفاوت داشته باشند:
+     *   • شکست **پیش از** commit: فایل‌های تازه هیچ ارجاعی ندارند → پاک شوند.
+     *   • شکست **پس از** commit (مثلاً صدور توکن یا نوشتن پاسخ): پروفایل به
+     *     این مسیرها اشاره می‌کند → پاک کردنشان تصاویر شکسته می‌سازد.
+     *
+     * قبلاً فقط یک `try/catch` عمومی بود و حالت دوم فایل‌ها را حذف می‌کرد.
+     * حالا سرویس گزارش می‌دهد که ثبت انجام شده یا نه.
+     */
+    const outcome: RegisterBarberOutcome = { persisted: false };
     try {
       delete dto.profileImage;
       delete dto.portfolioImages;
@@ -154,10 +170,19 @@ export class AuthController {
         );
         savedFiles.push(...dto.portfolioImages);
       }
-      return await this.authService.registerBarber(dto, response);
+
+      return await this.authService.registerBarber(dto, response, outcome);
     } catch (error) {
-      // اگر ثبت‌نام ناموفق بود، فایل‌های ذخیره‌شده بی‌استفاده نمانند
-      this.filesService.deleteFiles(savedFiles);
+      if (!outcome.persisted) {
+        // هیچ کاربری به این فایل‌ها اشاره نمی‌کند؛ نگه‌داشتنشان فقط فایل
+        // یتیم می‌سازد. خطای حذف هرگز خطای اصلی را پنهان نمی‌کند.
+        this.filesService.deleteFiles(savedFiles);
+      } else {
+        this.logger.error(
+          `ثبت‌نام آرایشگر انجام شد اما تکمیل پاسخ شکست خورد؛ ` +
+            `فایل‌ها عمداً حفظ شدند: ${savedFiles.join(', ')} — ${String(error)}`,
+        );
+      }
       throw error;
     }
   }
