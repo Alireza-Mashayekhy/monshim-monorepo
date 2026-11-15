@@ -73,23 +73,53 @@ export class ReferralService {
   }
 
   /**
-   * فراخوانی پس از تکمیل رزرو یا پرداخت موفق رزروِ آرایشگر.
-   * پاداش برای دعوت‌کننده است و با تحقق **یکی** از دو شرط زیر پرداخت می‌شود:
-   *   ۱. رسیدن به ۳۰ رزرو موفقِ پرداخت‌شده (تجمعی)؛
-   *   ۲. خرید صفحهٔ اختصاصی (پکیج صفحهٔ عمومی) توسط دعوت‌کننده.
+   * شرط پاداش دعوت — **روی آرایشگر دعوت‌شده** سنجیده می‌شود، نه دعوت‌کننده.
+   *
+   * قاعدهٔ محصول: «وقتی کسی را با کد معرفم دعوت می‌کنم، آن شخص باید ۳۰ رزرو
+   * موفقِ پرداخت‌شده داشته باشد یا صفحهٔ اختصاصی بخرد تا ۳۰۰٬۰۰۰ تومان به من
+   * داده شود.»
+   *
+   * پیاده‌سازی قبلی به‌جای این، شمارش رزروها و خرید صفحه را برای
+   * **دعوت‌کننده** انجام می‌داد؛ نتیجه این بود که دعوت‌کننده با ۳۰ رزرو خودش
+   * یا با خرید صفحهٔ خودش، پاداش هر دعوت را می‌گرفت، در حالی که دعوت‌شده
+   * هیچ کاری نکرده بود. (پاداش حتی بلافاصله پس از ثبت‌نام، از طریق
+   * `onReferralCreated`، واریز می‌شد.)
    */
-  async onReferrerBookingActivity(referrerProfileId: string): Promise<void> {
+
+  /** رزروهای موفقِ پرداخت‌شدهٔ یک **آرایشگر دعوت‌شده** (بر اساس پروفایل او). */
+  private countReferredPaidBookings(referral: Referral) {
+    return this.publicPageService.countSuccessfulPaidBookings(
+      referral.referredProfileId,
+    );
+  }
+
+  /** آیا **آرایشگر دعوت‌شده** صفحهٔ اختصاصی خریده است؟ */
+  private hasReferredPurchasedPage(referral: Referral) {
+    return this.publicPageService.hasPurchasedPackageByUserId(
+      referral.referredUserId,
+    );
+  }
+
+  /**
+   * فراخوانی پس از تکمیل رزرو یا پرداخت موفق رزروِ یک آرایشگر.
+   *
+   * `barberProfileId` پروفایل همان آرایشگری است که رزرو/پرداخت برایش انجام
+   * شده. اگر او با کد معرفی ثبت‌نام کرده باشد، دعوتِ مربوط به خودش ارزیابی
+   * می‌شود؛ پاداش به **دعوت‌کنندهٔ** او تعلق می‌گیرد.
+   */
+  async onReferredBookingActivity(barberProfileId: string): Promise<void> {
     try {
       const referrals = await this.referralRepo.find({
-        where: { referrerProfileId, status: ReferralStatus.PENDING },
+        where: {
+          referredProfileId: barberProfileId,
+          status: ReferralStatus.PENDING,
+        },
       });
       if (referrals.length === 0) return;
 
       const [paidBookingsCount, hasPurchasedPage] = await Promise.all([
-        this.publicPageService.countSuccessfulPaidBookings(referrerProfileId),
-        this.publicPageService.hasPurchasedPackageByUserId(
-          referrals[0].referrerUserId,
-        ),
+        this.countReferredPaidBookings(referrals[0]),
+        this.hasReferredPurchasedPage(referrals[0]),
       ]);
       await this.updateProgressAndAward(
         referrals,
@@ -98,30 +128,29 @@ export class ReferralService {
       );
     } catch (error) {
       this.logger.error(
-        `Failed to update referral progress for referrer profile ${referrerProfileId}: ${String(error)}`,
+        `Failed to update referral progress for referred barber profile ${barberProfileId}: ${String(error)}`,
       );
     }
   }
 
   /**
-   * ارزیابی فوری دعوت‌های در انتظار، بلافاصله پس از ثبت یک دعوت جدید.
+   * ارزیابی دعوت‌های در انتظارِ یک **آرایشگر دعوت‌شده**، بلافاصله پس از
+   * برقراری/بروزرسانی دعوت.
    *
-   * لازم است چون دعوت‌کننده ممکن است **پیش از** این دعوت، یکی از دو شرط
-   * (۳۰ رزرو موفق یا خرید صفحهٔ اختصاصی) را محقق کرده باشد؛ در این حالت
-   * پاداش نباید تا رزرو بعدیِ او معلق بماند.
+   * لازم است چون دعوت‌شده ممکن است پیش از این لحظه، یکی از دو شرط (۳۰ رزرو
+   * موفق یا خرید صفحهٔ اختصاصی) را محقق کرده باشد و پاداش نباید تا فعالیت
+   * بعدی‌اش معلق بماند.
    */
-  async onReferralCreated(referrerUserId: number): Promise<void> {
+  async onReferredProgress(referredUserId: number): Promise<void> {
     try {
       const referrals = await this.referralRepo.find({
-        where: { referrerUserId, status: ReferralStatus.PENDING },
+        where: { referredUserId, status: ReferralStatus.PENDING },
       });
       if (referrals.length === 0) return;
 
       const [paidBookingsCount, hasPurchasedPage] = await Promise.all([
-        this.publicPageService.countSuccessfulPaidBookings(
-          referrals[0].referrerProfileId,
-        ),
-        this.publicPageService.hasPurchasedPackageByUserId(referrerUserId),
+        this.countReferredPaidBookings(referrals[0]),
+        this.hasReferredPurchasedPage(referrals[0]),
       ]);
       await this.updateProgressAndAward(
         referrals,
@@ -130,42 +159,51 @@ export class ReferralService {
       );
     } catch (error) {
       this.logger.error(
-        `Failed to evaluate referrals after a new referral for user ${referrerUserId}: ${String(error)}`,
+        `Failed to evaluate referrals after activity for referred user ${referredUserId}: ${String(error)}`,
       );
     }
   }
 
-  /** ارزیابی دوبارهٔ شرط‌ها پس از خرید صفحهٔ عمومی توسط دعوت‌کننده (شرط «یا») */
-  async onPublicPagePurchased(referrerUserId: number): Promise<void> {
+  /**
+   * پس از خرید صفحهٔ اختصاصی توسط یک **آرایشگر دعوت‌شده**: دعوت او ارزیابی
+   * می‌شود تا پاداش به معرفش واریز شود (شرط دوم).
+   */
+  async onReferredPublicPagePurchased(referredUserId: number): Promise<void> {
     try {
       const referrals = await this.referralRepo.find({
-        where: { referrerUserId, status: ReferralStatus.PENDING },
+        where: { referredUserId, status: ReferralStatus.PENDING },
       });
       if (referrals.length === 0) return;
 
-      const referrerProfileId = referrals[0].referrerProfileId;
-      const paidBookingsCount =
-        await this.publicPageService.countSuccessfulPaidBookings(
-          referrerProfileId,
-        );
+      const paidBookingsCount = await this.countReferredPaidBookings(
+        referrals[0],
+      );
       await this.updateProgressAndAward(referrals, paidBookingsCount, true);
     } catch (error) {
       this.logger.error(
-        `Failed to award referral after public page purchase by user ${referrerUserId}: ${String(error)}`,
+        `Failed to award referral after public page purchase by referred user ${referredUserId}: ${String(error)}`,
       );
     }
   }
 
+  /**
+   * به‌روزرسانی پیشرفت و واریز پاداش.
+   *
+   * `paidBookingsCount` و `hasPurchasedPage` هر دو مربوط به **آرایشگر
+   * دعوت‌شده** هستند. پاداش فقط زمانی واریز می‌شود که یکی از دو شرط محقق
+   * شده باشد؛ در غیر این صورت فقط شمارندهٔ پیشرفت ذخیره می‌شود.
+   */
   private async updateProgressAndAward(
     referrals: Referral[],
     paidBookingsCount: number,
     hasPurchasedPage: boolean,
   ) {
+    const isEligible =
+      paidBookingsCount >= this.REQUIRED_BOOKINGS || hasPurchasedPage;
+
     for (const referral of referrals) {
       referral.completedBookingsCount = paidBookingsCount;
-      // شرط «یا»: یا ۳۰ رزرو موفقِ پرداخت‌شده، یا خرید صفحهٔ اختصاصی
-      const isEligible =
-        paidBookingsCount >= this.REQUIRED_BOOKINGS || hasPurchasedPage;
+
       if (isEligible && !referral.rewardPaid) {
         await this.awardReward(referral);
       } else {
@@ -195,7 +233,7 @@ export class ReferralService {
           userId: lockedReferral.referrerUserId,
           amount: this.REWARD_AMOUNT,
           description:
-            'پاداش دعوت آرایشگر - ۳۰ رزرو موفق یا خرید صفحهٔ اختصاصی',
+            'پاداش دعوت آرایشگر - ۳۰ رزرو موفق یا خرید صفحهٔ اختصاصی توسط آرایشگر دعوت‌شده',
           paymentId: `referral-${lockedReferral.id}`,
           legacyReference: lockedReferral.id,
         });
@@ -232,16 +270,36 @@ export class ReferralService {
       };
     }
 
-    const [referrals, completedPaidBookingsCount, hasPurchasedPublicPage] =
-      await Promise.all([
-        this.referralRepo.find({
-          where: { referrerProfileId: profile.id },
-          relations: { referredProfile: { user: true } },
-          order: { createdAt: 'DESC' },
-        }),
-        this.publicPageService.countSuccessfulPaidBookings(profile.id),
-        this.publicPageService.hasPurchasedPackageByUserId(userId),
-      ]);
+    const referrals = await this.referralRepo.find({
+      where: { referrerProfileId: profile.id },
+      relations: { referredProfile: { user: true } },
+      order: { createdAt: 'DESC' },
+    });
+
+    /**
+     * پیشرفت هر دعوت بر اساس فعالیت **آرایشگر دعوت‌شدهٔ همان دعوت** سنجیده
+     * می‌شود (نه فعالیت خودِ دعوت‌کننده). برای سازگاری با قرارداد قبلی،
+     * `eligibility` وضعیت «بهترین» دعوت را نشان می‌دهد: بیشترین رزرو موفق و
+     * اینکه هر کدام از دعوت‌شده‌ها صفحهٔ اختصاصی خریده باشد.
+     */
+    const referredProgress = await Promise.all(
+      referrals.map(async referral => {
+        const [paidBookings, purchasedPage] = await Promise.all([
+          this.countReferredPaidBookings(referral),
+          this.hasReferredPurchasedPage(referral),
+        ]);
+        return { referralId: referral.id, paidBookings, purchasedPage };
+      }),
+    );
+    const completedPaidBookingsCount = referredProgress.reduce(
+      (max, item) => Math.max(max, item.paidBookings),
+      0,
+    );
+    const hasPurchasedPublicPage = referredProgress.some(
+      item => item.purchasedPage,
+    );
+
+    const paidRewards = referrals.filter(r => r.rewardPaid).length;
 
     const stats = {
       total: referrals.length,
@@ -252,25 +310,45 @@ export class ReferralService {
     };
 
     return {
-      referrals: referrals.map(r => ({
-        id: r.id,
-        referredUserId: r.referredUserId,
-        referredFullName: r.referredProfile?.user?.fullName ?? null,
-        referredSalonName: r.referredProfile?.salonName ?? null,
-        status: r.status,
-        completedBookingsCount: completedPaidBookingsCount,
-        rewardPaid: r.rewardPaid,
-        createdAt: r.createdAt,
-      })),
+      referrals: referrals.map(r => {
+        const progress = referredProgress.find(p => p.referralId === r.id);
+
+        return {
+          id: r.id,
+          referredUserId: r.referredUserId,
+          referredFullName: r.referredProfile?.user?.fullName ?? null,
+          referredSalonName: r.referredProfile?.salonName ?? null,
+          status: r.status,
+          // پیشرفتِ همین دعوت = رزروهای موفقِ همان آرایشگر دعوت‌شده.
+          completedBookingsCount: progress?.paidBookings ?? 0,
+          hasPurchasedPublicPage: progress?.purchasedPage ?? false,
+          rewardPaid: r.rewardPaid,
+          createdAt: r.createdAt,
+        };
+      }),
       stats,
       eligibility: {
         completedPaidBookingsCount,
         requiredPaidBookings: this.REQUIRED_BOOKINGS,
         hasPurchasedPublicPage,
-        // شرط «یا»: تحقق یکی از دو مسیر (۳۰ رزرو موفق یا خرید صفحه) کافی است
+        /**
+         * شرط «یا»: تحقق یکی از دو مسیر (۳۰ رزرو موفق یا خرید صفحه) **توسط
+         * آرایشگر دعوت‌شده**.
+         */
         isEligible:
           completedPaidBookingsCount >= this.REQUIRED_BOOKINGS ||
           hasPurchasedPublicPage,
+        /** مبلغ پاداش هر دعوت (تومان) */
+        rewardAmount: this.REWARD_AMOUNT,
+        /** جمع پاداش‌های واریزشده تا این لحظه */
+        paidRewardAmount: paidRewards * this.REWARD_AMOUNT,
+        /**
+         * جمع پاداش‌هایی که هنوز واریز نشده‌اند (منتظر تحقق شرط توسط
+         * آرایشگر دعوت‌شده). همیشه:
+         * paidRewardAmount + unpaidRewardAmount = total * rewardAmount
+         */
+        unpaidRewardAmount:
+          (referrals.length - paidRewards) * this.REWARD_AMOUNT,
       },
     };
   }

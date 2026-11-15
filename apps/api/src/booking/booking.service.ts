@@ -1098,7 +1098,9 @@ export class BookingsService {
 
     if (newStatus === BookingStatus.COMPLETED) {
       const savedBooking = await this.bookingRepo.save(booking);
-      await this.referralService.onReferrerBookingActivity(booking.barberId);
+      // ارزیابی دعوتِ همین آرایشگر (اگر با کد معرف ثبت‌نام کرده باشد)؛
+      // پاداش به معرفِ او واریز می‌شود.
+      await this.referralService.onReferredBookingActivity(booking.barberId);
       await this.clubService.addFromSuccessfulBooking({
         barberId: booking.barberId,
         customerId: booking.customerId,
@@ -1796,7 +1798,9 @@ export class BookingsService {
 
         booking.status = BookingStatus.COMPLETED;
 
-        await this.referralService.onReferrerBookingActivity(booking.barberId);
+        // ارزیابی دعوتِ همین آرایشگر (اگر با کد معرف ثبت‌نام کرده باشد)؛
+        // پاداش به معرفِ او واریز می‌شود.
+        await this.referralService.onReferredBookingActivity(booking.barberId);
         await this.clubService.addFromSuccessfulBooking({
           barberId: booking.barberId,
           customerId: booking.customerId,
