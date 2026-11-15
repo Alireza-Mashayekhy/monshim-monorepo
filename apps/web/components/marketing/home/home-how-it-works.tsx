@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 const flows = {
   customer: {
     label: 'مشتری',
-    href: '/panel/explore',
+    href: '/providers',
     cta: 'آرایشگاه را پیدا کنید',
     steps: [
       [

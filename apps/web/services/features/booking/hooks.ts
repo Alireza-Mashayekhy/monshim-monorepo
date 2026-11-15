@@ -2,6 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
+import { trackEvent } from '@/lib/analytics';
+
 import {
   cancelBooking,
   confirmBooking,
@@ -45,7 +47,14 @@ export const useCreateBooking = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (dto: CreateBookingDto) => createBooking(dto),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // فقط بعد از پاسخ موفقِ سرور؛ هیچ شناسه یا مبلغی ارسال نمی‌شود.
+      trackEvent('booking_completed', {
+        has_deposit: Boolean(
+          (variables as { depositAmount?: number | null } | undefined)
+            ?.depositAmount,
+        ),
+      });
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
     },
   });

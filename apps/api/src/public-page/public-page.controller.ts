@@ -40,6 +40,23 @@ export class PublicPageController {
     return this.publicPageService.getActiveDirectory();
   }
 
+  /**
+   * صفحه‌بندی‌شدهٔ فهرست عمومی آرایشگاه‌ها (`/providers` در فرانت) — بدون
+   * نیاز به ورود، فقط پروفایل‌های تأییدشده/فعال/دارای اسلاگ و حداقل یک خدمت
+   * فعال. رشتهٔ جست‌وجو عمداً پذیرفته نمی‌شود تا سطح حمله و هزینهٔ کوئری
+   * حداقل بماند.
+   */
+  @Get('directory/page')
+  getDirectoryPage(
+    @Query('page') page?: string,
+    @Query('perPage') perPage?: string,
+  ) {
+    return this.publicPageService.getDirectoryPage(
+      Number(page) || 1,
+      Number(perPage) || 12,
+    );
+  }
+
   @Get('barber/:identifier')
   getPublicBarberPage(@Param('identifier') identifier: string) {
     return this.publicPageService.getPublicBarberPage(identifier);

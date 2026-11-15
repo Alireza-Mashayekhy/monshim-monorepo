@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { trackEvent } from '@/lib/analytics';
 import { getErrorStatus } from '@/lib/api-error';
 import { authKeys } from '@/lib/auth';
 import { isAdmin, isBarber, rolesOf } from '@/lib/roles';
@@ -106,15 +107,44 @@ export function useVerifyOtp() {
   return useMutation({ mutationFn: verifyOtp });
 }
 
-export function useSignUp() {
+/**
+ * ثبت‌نامِ مشتری.
+ *
+ * ردیابی در همین لایه (و نه در فرم‌ها) انجام می‌شود تا هر مسیری که به این
+ * موتیشن می‌رسد — فرم ثبت‌نام، دیالوگ رزرو و در آینده هر فرم دیگر — یک
+ * رویدادِ یکسان بفرستد و رویدادِ تکراری ساخته نشود.
+ * هیچ داده شخصی در payload نیست.
+ */
+export function useSignUp(source: 'register' | 'booking_dialog' = 'register') {
   const sync = useSyncSession();
-  return useMutation({ mutationFn: signUp, onSuccess: sync });
+  return useMutation({
+    mutationFn: signUp,
+    onMutate: () => {
+      trackEvent('customer_registration_started', { source });
+    },
+    onSuccess: async () => {
+      trackEvent('customer_registration_completed', { source });
+      return sync();
+    },
+  });
 }
 
+/** ثبت‌نامِ آرایشگر — همان الگوی ردیابیِ بالا. */
 export function useRegisterBarber() {
   const sync = useSyncSession();
   // Registration already issues tokens containing the new role.
-  return useMutation({ mutationFn: registerBarber, onSuccess: sync });
+  return useMutation({
+    mutationFn: registerBarber,
+    onMutate: () => {
+      trackEvent('provider_registration_started', { source: 'provider_signup' });
+    },
+    onSuccess: async () => {
+      trackEvent('provider_registration_completed', {
+        source: 'provider_signup',
+      });
+      return sync();
+    },
+  });
 }
 
 /** دریافت توکن تازه — برای وقتی که نقش کاربر در سرور تغییر کرده است */

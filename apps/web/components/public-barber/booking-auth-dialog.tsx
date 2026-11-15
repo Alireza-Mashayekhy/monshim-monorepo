@@ -55,7 +55,7 @@ export default function BookingAuthDialog({
   const [working, setWorking] = useState(false);
   const sendOtp = useSendOtp();
   const login = useLogin();
-  const signUp = useSignUp();
+  const signUp = useSignUp('booking_dialog');
 
   useEffect(() => {
     if (!resendAt) return;

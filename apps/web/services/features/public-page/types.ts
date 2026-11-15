@@ -61,4 +61,42 @@ export interface PublicPageDirectoryEntry {
   id: number;
   slug: string;
   updatedAt: string | null;
+  /**
+   * سیگنال‌های کامل‌بودن محتوا برای سیاستِ کیفیتِ ایندکس
+   * (`lib/profile-quality.ts`). اختیاری است تا نسخهٔ قدیمیِ کش‌شدهٔ پاسخ
+   * بک‌اند صفحه‌ها را نشکند.
+   */
+  quality?: { bioLength: number; portfolioCount: number } | null;
+}
+
+/**
+ * کارتِ فهرست عمومی آرایشگاه‌ها (`/providers`).
+ *
+ * این ساختار عیناً همان چیزی است که `GET /public-page/directory/page` برمی‌گرداند
+ * و فقط شامل فیلدهای عمومیِ پروفایل است — هیچ دادهٔ خصوصی (تلفن، ایمیل، کد ملی،
+ * وضعیت پکیج یا اطلاعات پرداخت) در آن نیست.
+ */
+export interface PublicDirectoryCard {
+  id: number;
+  slug: string;
+  salonName: string;
+  activityType: string | null;
+  profileImage: string | null;
+  rating: number;
+  reviewCount: number;
+  servicesCount: number;
+  minPrice: number | null;
+  createdAt: string | null;
+  city: { name: string; slug: string } | null;
+  province: { name: string; slug: string } | null;
+}
+
+export interface PublicDirectoryPage {
+  data: PublicDirectoryCard[];
+  pagination: {
+    page: number;
+    perPage: number;
+    total: number;
+    totalPages: number;
+  };
 }

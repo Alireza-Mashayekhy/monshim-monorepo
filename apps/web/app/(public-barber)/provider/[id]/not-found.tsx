@@ -24,7 +24,7 @@ export default function PublicBarberNotFound() {
       </p>
       <div className="flex flex-wrap justify-center gap-2">
         <Button asChild>
-          <Link href="/panel/explore">جست‌وجوی آرایشگاه‌ها</Link>
+          <Link href="/providers">جست‌وجوی آرایشگاه‌ها</Link>
         </Button>
         <Button asChild variant="outline">
           <Link href="/">صفحهٔ اصلی</Link>

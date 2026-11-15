@@ -101,6 +101,11 @@ export function isPublicAuthPath(pathname: string) {
     isPathWithin(pathname, '/provider-management') ||
     isPathWithin(pathname, '/online-provider-booking') ||
     isPathWithin(pathname, '/pricing') ||
+    // فهرست عمومی آرایشگاه‌ها (`/providers`) — صفحهٔ discovery که بدون ورود
+    // دیده می‌شود و مقصدِ ۳۰۱ مسیر بازنشستهٔ `/explore` است. عمداً با
+    // `/provider` (پروفایل) قاطی نمی‌شود چون `isPathWithin` مرزها را دقیق
+    // بررسی می‌کند: `/providers` از `/provider/` شروع نمی‌شود.
+    isPathWithin(pathname, '/providers') ||
     // صفحهٔ عمومی و سئوشدهٔ آموزش سایت (ویدیوهای آپارات).
     isPathWithin(pathname, '/tutorials') ||
     isPathWithin(pathname, '/blog')

@@ -3,8 +3,10 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { FrontendRevalidationService } from 'src/common/services/frontend-revalidation.service';
 import { isDuplicateEntryError } from 'src/common/utils/db-error.util';
 import { Repository } from 'typeorm';
 
@@ -17,6 +19,12 @@ export class BlogService {
   constructor(
     @InjectRepository(BlogArticle)
     private readonly repo: Repository<BlogArticle>,
+    /**
+     * اطلاع‌دادن به فرانت برای پاک‌سازی on-demand کشِ بلاگ.
+     * `Optional` است تا تست‌های واحد و محیط‌های بدون env لازم نباشد آن را بسازند.
+     */
+    @Optional()
+    private readonly frontendRevalidationService?: FrontendRevalidationService,
   ) {}
   async list(admin = false, page = 1, search = '') {
     page = Math.floor(Math.max(1, Math.min(10000, Number(page) || 1)));
@@ -94,7 +102,12 @@ export class BlogService {
       content: sanitizeContent(dto.content),
     });
     try {
-      return await this.repo.save(article);
+      const saved = await this.repo.save(article);
+      // کشِ ISR فرانت (`/blog` و `/blog/{slug}`) همان لحظه تازه شود.
+      this.frontendRevalidationService?.notifyBlogChanged({
+        slug: saved.slug,
+      });
+      return saved;
     } catch (error) {
       if (isDuplicateEntryError(error))
         throw new ConflictException('این نامک قبلاً استفاده شده است');
@@ -103,7 +116,9 @@ export class BlogService {
   }
   async remove(id: number) {
     const article = await this.byId(id);
+    const slug = article.slug;
     await this.repo.remove(article);
+    this.frontendRevalidationService?.notifyBlogChanged({ slug });
     return { deleted: true };
   }
 }

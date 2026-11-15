@@ -366,7 +366,7 @@ describe('PublicPageService', () => {
     );
     expect(updated.slug).toBe('aria-salon');
     expect(updated.isSlugLocked).toBe(true);
-    expect(updated.publicUrl).toBe('https://monshiim.ir/barber/aria-salon');
+    expect(updated.publicUrl).toBe('https://monshiim.ir/provider/aria-salon');
   });
 
   it('پس از ثبت، تغییر اسلاگ را رد می‌کند (اسلاگ یک‌باره و غیرقابل برگشت است)', async () => {
@@ -484,7 +484,7 @@ describe('PublicPageService', () => {
       isApproved: true,
       isPubliclyVisible: false,
       slug: 'aria-salon',
-      publicUrl: 'https://monshiim.ir/barber/aria-salon',
+      publicUrl: 'https://monshiim.ir/provider/aria-salon',
     });
     expect(profileRepo.findOne).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -547,13 +547,22 @@ describe('PublicPageService', () => {
 
     const page = await withSlug.getPublicBarberPage('aria-salon');
     expect(page.slug).toBe('aria-salon');
-    expect(page.publicPage.url).toBe('https://monshiim.ir/barber/aria-salon');
+    expect(page.publicPage.url).toBe('https://monshiim.ir/provider/aria-salon');
   });
 
   it('در دایرکتوری sitemap فقط آرایشگرهای فعالِ دارای اسلاگ را قرار می‌دهد', async () => {
     const { service } = createService({
       profiles: [
-        { id: 'prof-1', userId: 10, slug: 'aria-salon' },
+        {
+          id: 'prof-1',
+          userId: 10,
+          slug: 'aria-salon',
+          // lastmod باید از تاریخ تغییر *محتوا* بیاید، نه از رزرو/خرید.
+          updatedAt: '2026-03-05T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          bio: 'سالن تخصصی مو و میکاپ با بیست سال سابقه',
+          portfolioImages: ['/uploads/portfolio/a.webp'],
+        },
         { id: 'prof-2', userId: 20, slug: null },
       ],
       purchaseDirectoryRows: [
@@ -567,8 +576,29 @@ describe('PublicPageService', () => {
       {
         id: 10,
         slug: 'aria-salon',
-        updatedAt: '2026-02-01T00:00:00.000Z',
+        updatedAt: '2026-03-05T00:00:00.000Z',
+        quality: { bioLength: 39, portfolioCount: 1 },
       },
     ]);
+  });
+
+  it('lastmodِ پروفایلِ بدون updated_at به createdAt برمی‌گردد (نه تاریخ خرید)', async () => {
+    const { service } = createService({
+      profiles: [
+        {
+          id: 'prof-1',
+          userId: 10,
+          slug: 'aria-salon',
+          updatedAt: null,
+          createdAt: '2025-06-01T00:00:00.000Z',
+        },
+      ],
+      purchaseDirectoryRows: [
+        { barberProfileId: 'prof-1', updatedAt: '2026-02-01T00:00:00.000Z' },
+      ],
+    });
+
+    const directory = await service.getActiveDirectory();
+    expect(directory[0].updatedAt).toBe('2025-06-01T00:00:00.000Z');
   });
 });

@@ -148,7 +148,14 @@ export class PublicPageService {
       isProduction: process.env.NODE_ENV === 'production',
     }).origin;
 
-    return `${frontUrl}/barber/${encodeURIComponent(slug)}`;
+    // آدرس **کانونیکال** صفحهٔ عمومی آرایشگر: `/provider/[slug]`.
+    //
+    // پیش‌تر اینجا `/barber/{slug}` ساخته می‌شد؛ مسیرِ بازنشسته‌ای که
+    // `proxy.ts` در فرانت با ۳۰۱ به `/provider` می‌فرستد. یعنی همان لینکی که
+    // آرایشگر از داشبورد کپی می‌کرد (و طبق آموزش سایت در بایوی اینستاگرام
+    // می‌گذاشت) یک ریدایرکت بود، نه آدرس کانونیکال. اکنون رشتهٔ تولیدشده
+    // با canonical و sitemap یکی است.
+    return `${frontUrl}/provider/${encodeURIComponent(slug)}`;
   }
 
   /** پروفایل آرایشگر را بر اساس شناسهٔ کاربری پیدا می‌کند. */
@@ -579,11 +586,28 @@ export class PublicPageService {
 
   /**
    * فهرست اسلاگِ آرایشگرهایی که صفحهٔ عمومی‌شان فعال است و اسلاگ ثبت کرده‌اند
-   * (مبنای sitemap). خروجی با فهرستِ آرایشگرهای واجد شرایطِ نمایش عمومی تلاقی
-   * می‌خورد تا صفحه‌ای که قرار است ۴۰۴ بدهد وارد sitemap نشود.
+   * (مبنای sitemap و صفحهٔ `/providers`). خروجی با فهرستِ آرایشگرهای واجد
+   * شرایطِ نمایش عمومی تلاقی می‌خورد تا صفحه‌ای که قرار است ۴۰۴ بدهد وارد
+   * sitemap نشود.
+   *
+   * `updatedAt` = تاریخ آخرین تغییر محتوای پروفایل (`barber_profile.updated_at`،
+   * با fallback به `created_at`). پیش‌تر این مقدار از
+   * `MAX(purchase.createdAt)`/`MAX(booking.updatedAt)` می‌آمد که فعالیت رزرو
+   * بود، نه تغییر محتوا.
    */
   async getActiveDirectory(): Promise<
-    { id: number; slug: string; updatedAt: string | null }[]
+    {
+      id: number;
+      slug: string;
+      updatedAt: string | null;
+      /**
+       * سیگنال‌های «کامل‌بودنِ محتوا» برای سیاستِ کیفیتِ ایندکس در فرانت
+       * (`apps/web/lib/profile-quality.ts`). فقط طولِ بیو و تعداد
+       * نمونه‌کارها لازم است؛ «حداقل یک خدمت فعال» از قبل در
+       * `getPublicDirectory()` تضمین شده است.
+       */
+      quality: { bioLength: number; portfolioCount: number };
+    }[]
   > {
     const { barbers } = await this.barberService.getPublicDirectory();
     const eligibleUserIds = [
@@ -593,15 +617,44 @@ export class PublicPageService {
 
     const profiles = await this.profileRepo.find({
       where: { userId: In(eligibleUserIds) },
-      select: { id: true, userId: true, slug: true },
+      select: {
+        id: true,
+        userId: true,
+        slug: true,
+        bio: true,
+        portfolioImages: true,
+        // مبنای `lastmod`: آخرین تغییر محتوای پروفایل. `createdAt` فقط
+        // fallbackِ ردیف‌های قدیمی است (پیش از اجرای
+        // sql/barber-profile-updated-at.sql).
+        updatedAt: true,
+        createdAt: true,
+      },
     });
     if (profiles.length === 0) return [];
 
-    const profileMetaById = new Map<string, { userId: number; slug: string }>();
+    const profileMetaById = new Map<
+      string,
+      {
+        userId: number;
+        slug: string;
+        contentUpdatedAt: Date | null;
+        quality: { bioLength: number; portfolioCount: number };
+      }
+    >();
     for (const profile of profiles) {
       const slug = profile.slug?.trim();
       if (!slug) continue;
-      profileMetaById.set(profile.id, { userId: profile.userId, slug });
+      profileMetaById.set(profile.id, {
+        userId: profile.userId,
+        slug,
+        contentUpdatedAt: profile.updatedAt ?? profile.createdAt ?? null,
+        quality: {
+          bioLength: (profile.bio ?? '').trim().length,
+          portfolioCount: Array.isArray(profile.portfolioImages)
+            ? profile.portfolioImages.filter(Boolean).length
+            : 0,
+        },
+      });
     }
     const profileIds = [...profileMetaById.keys()];
     if (profileIds.length === 0) return [];
@@ -646,13 +699,20 @@ export class PublicPageService {
     register(purchases);
     register(qualified);
 
+    // توجه: `updatedAtByProfileId` فقط برای تعیین **واجد شرایط بودن** (خرید
+    // پکیج یا ۳۰۰ رزرو پرداخت‌شده) استفاده می‌شود، نه برای `lastmod`.
+    // `lastmod` را از `contentUpdatedAt` می‌گیریم تا رزروهای جدید باعث
+    // «تازه‌شدن» بی‌دلیل صفحه در sitemap نشوند.
     return [...updatedAtByProfileId.entries()]
-      .map(([barberProfileId, updatedAt]) => {
+      .map(([barberProfileId]) => {
         const meta = profileMetaById.get(barberProfileId)!;
+        // ممکن است mock/درایور رشته برگرداند؛ `toDate` هر دو حالت را پوشش می‌دهد.
+        const lastModified = toDate(meta.contentUpdatedAt);
         return {
           id: meta.userId,
           slug: meta.slug,
-          updatedAt: updatedAt ? updatedAt.toISOString() : null,
+          updatedAt: lastModified ? lastModified.toISOString() : null,
+          quality: meta.quality,
         };
       })
       .filter(
@@ -660,6 +720,66 @@ export class PublicPageService {
           Number.isInteger(entry.id) && entry.id > 0 && Boolean(entry.slug),
       )
       .sort((a, b) => a.id - b.id);
+  }
+
+  /**
+   * یک صفحه از فهرست عمومی آرایشگاه‌ها برای صفحهٔ `/providers`.
+   *
+   * منبعِ «چه کسی واجد شرایط است» عمداً همان `getActiveDirectory()` است که
+   * sitemap هم از آن می‌خورد. اگر این دو از هم جدا می‌شدند، ممکن بود فهرست
+   * به پروفایلی لینک بدهد که ۴۰۴ می‌دهد (و sitemap هم آن را اعلام کند) —
+   * یعنی دقیقاً همان ناسازگاری‌ای که باید از آن پرهیز کنیم.
+   *
+   * ترتیب پایدار است (شناسهٔ کاربر صعودی) تا شمارهٔ صفحه‌ها بین درخواست‌ها
+   * جابه‌جا نشود؛ صفحه‌بندیِ ناپایدار باعث می‌شود یک پروفایل در دو صفحه تکرار
+   * یا از هر دو حذف شود.
+   */
+  async getDirectoryPage(
+    page = 1,
+    perPage = 12,
+  ): Promise<{
+    data: Awaited<ReturnType<BarberService['findPublicCards']>>;
+    pagination: {
+      page: number;
+      perPage: number;
+      total: number;
+      totalPages: number;
+    };
+  }> {
+    const safePerPage = Math.min(Math.max(Math.trunc(perPage) || 12, 1), 48);
+    const entries = await this.getActiveDirectory();
+    const total = entries.length;
+    const totalPages = Math.max(1, Math.ceil(total / safePerPage));
+    const safePage = Math.min(Math.max(Math.trunc(page) || 1, 1), totalPages);
+
+    const slice = entries.slice(
+      (safePage - 1) * safePerPage,
+      safePage * safePerPage,
+    );
+    if (slice.length === 0) {
+      return {
+        data: [],
+        pagination: { page: safePage, perPage: safePerPage, total, totalPages },
+      };
+    }
+
+    const cards = await this.barberService.findPublicCards(
+      slice.map(entry => entry.id),
+    );
+    const cardsById = new Map(cards.map(card => [card.id, card]));
+
+    // ترتیب را از `entries` نگه می‌داریم، نه از خروجی کوئری.
+    const data = slice
+      .map(entry => {
+        const card = cardsById.get(entry.id);
+        return card ? { ...card, slug: entry.slug } : null;
+      })
+      .filter((card): card is NonNullable<typeof card> => card !== null);
+
+    return {
+      data,
+      pagination: { page: safePage, perPage: safePerPage, total, totalPages },
+    };
   }
 
   private normalizeDiscountCode(code: string) {

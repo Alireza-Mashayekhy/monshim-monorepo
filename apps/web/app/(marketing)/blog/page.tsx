@@ -3,7 +3,10 @@ import Link from 'next/link';
 import { getArticles } from '@/lib/blog/server';
 import { publicImageUrl } from '@/lib/images';
 import { buildPageMetadata } from '@/lib/seo';
-export const dynamic = 'force-dynamic';
+// ISR: کشِ داده با تگ `BLOG_CACHE_TAG` (lib/blog/server.ts) و انقضای فوری از
+// طریق وبهوک `/api/revalidate` هنگام انتشار/ویرایش مقاله.
+export const revalidate = 300;
+
 export const metadata = buildPageMetadata({
   title: 'بلاگ منشیم',
   description: 'مقاله‌ها و راهنماهای خدمات زیبایی و مدیریت سالن در بلاگ منشیم',

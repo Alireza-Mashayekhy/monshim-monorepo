@@ -12,6 +12,7 @@ import {
 import { toast } from 'sonner';
 
 import { useHydrated } from '@/hooks/use-hydrated';
+import { trackEvent } from '@/lib/analytics';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { authKeys } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -46,6 +47,9 @@ function BookingGateContent({
     if (checkingRef.current) return;
     checkingRef.current = true;
     setChecking(true);
+    // شروع فرایند رزرو (بدون داده شخصی) — پیش از بررسی نشست، چون قصد کاربر
+    // همان کلیک است.
+    trackEvent('booking_started', { source: 'profile' });
     try {
       // Always verify the current cookie on click. A refresh-only session is
       // restored by the API interceptor; a network/server error is not a guest.

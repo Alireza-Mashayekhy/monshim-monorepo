@@ -174,6 +174,17 @@ export class BarberService implements OnModuleInit {
           `ALTER TABLE \`${tableName}\` ADD COLUMN \`pending_rejection_reason\` TEXT NULL`,
         );
       }
+
+      // `lastmod` سئو: تاریخ آخرین تغییر محتوای پروفایل (نه تاریخ رزروها).
+      // فایل sql/barber-profile-updated-at.sql معادل productionِ همین کار است.
+      if (!existing.has('updated_at')) {
+        await this.profileRepository.query(
+          `ALTER TABLE \`${tableName}\` ADD COLUMN \`updated_at\` DATETIME(6) NULL`,
+        );
+        await this.profileRepository.query(
+          `UPDATE \`${tableName}\` SET \`updated_at\` = \`created_at\` WHERE \`updated_at\` IS NULL`,
+        );
+      }
     } catch (error) {
       if (!visibilityColumnReady) {
         this.logger.error(
@@ -752,6 +763,83 @@ export class BarberService implements OnModuleInit {
           }
         : null,
     };
+  }
+
+  /**
+   * کارت‌های عمومیِ فهرست آرایشگاه‌ها (`/providers` در فرانت).
+   *
+   * چرا یک متد جدا؟
+   * -----------------
+   * `getPublicDirectory()` فقط شناسه و شهر برمی‌گرداند (برای sitemap) و
+   * `findPublicOne()` یک پروفایل کامل با تمام خدمات است. برای یک صفحهٔ
+   * فهرست به دادهٔ سبک و صفحه‌بندی‌شده نیاز داریم و مهم‌تر: نباید برای هر
+   * کارت یک کوئری جدا بزنیم (N+1). این متد همهٔ کارت‌ها را در **یک** کوئری
+   * می‌گیرد.
+   *
+   * قواعد افشا دقیقاً همان `findPublicOne` است: فقط پروفایل تأییدشده، حساب
+   * فعال، نمایش عمومی روشن و دارای حداقل یک خدمت فعال. هیچ فیلد خصوصی
+   * (تلفن، کد ملی، ایمیل، اطلاعات پرداخت، وضعیت پکیج) اینجا انتخاب نمی‌شود.
+   */
+  async findPublicCards(userIds: number[]) {
+    const ids = [
+      ...new Set(userIds.filter(id => Number.isInteger(id) && id > 0)),
+    ];
+    if (ids.length === 0) return [];
+
+    const users = await this.userRepo
+      .createQueryBuilder('user')
+      .innerJoinAndSelect('user.barberProfile', 'profile')
+      .leftJoinAndSelect('profile.city', 'city')
+      .leftJoinAndSelect('profile.province', 'province')
+      .leftJoinAndSelect(
+        'user.services',
+        'services',
+        'services.isActive = :serviceActive',
+        { serviceActive: true },
+      )
+      .where('user.id IN (:...ids)', { ids })
+      .andWhere('(user.roles LIKE :roleLower OR user.roles LIKE :roleUpper)', {
+        roleLower: '%barber%',
+        roleUpper: '%Barber%',
+      })
+      .andWhere('user.isActive = :userActive', { userActive: true })
+      .andWhere('profile.isApproved = :isApproved', { isApproved: true })
+      .andWhere('profile.isPubliclyVisible = :isPubliclyVisible', {
+        isPubliclyVisible: true,
+      })
+      .getMany();
+
+    return users
+      .filter(user => Boolean(user.barberProfile))
+      .map(user => {
+        const profile = user.barberProfile;
+        const services = user.services ?? [];
+        const prices = services
+          .map(service => Number(service.price))
+          .filter(price => Number.isFinite(price) && price > 0);
+
+        return {
+          id: user.id,
+          slug: profile.slug ?? null,
+          salonName: profile.salonName,
+          activityType: profile.activityType,
+          profileImage: profile.profileImage,
+          rating: Number(profile.rating || 0),
+          reviewCount: Number(profile.reviewCount || 0),
+          servicesCount: services.length,
+          minPrice: prices.length ? Math.min(...prices) : null,
+          createdAt:
+            profile.createdAt instanceof Date
+              ? profile.createdAt.toISOString()
+              : null,
+          city: profile.city
+            ? { name: profile.city.name, slug: profile.city.slug }
+            : null,
+          province: profile.province
+            ? { name: profile.province.name, slug: profile.province.slug }
+            : null,
+        };
+      });
   }
 
   /** Public IDs/cities for sitemap and indexable city routes; requires an
