@@ -15,6 +15,7 @@ import {
   Store,
   User,
   UsersRound,
+  Wallet,
 } from 'lucide-react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -33,12 +34,20 @@ import FadeIn from '@/components/shared/fade-in';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getActivityTypeLabel } from '@/constants/activity-types';
-import { REFERRAL_REQUIRED_PAID_BOOKINGS } from '@/constants/referral';
+import {
+  REFERRAL_REQUIRED_PAID_BOOKINGS,
+  REFERRAL_REWARD_AMOUNT_TOMANS,
+} from '@/constants/referral';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { isoToJalali } from '@/lib/date-utils';
 import { getImageUploadError, IMAGE_ACCEPT } from '@/lib/image-upload';
 import { siteConfig } from '@/lib/site-config';
-import { DefaultImage, getFullImageUrl, toPersianDigits } from '@/lib/utils';
+import {
+  DefaultImage,
+  formatFaNumber,
+  getFullImageUrl,
+  toPersianDigits,
+} from '@/lib/utils';
 import { useLogout } from '@/services/features/auth/hooks';
 import {
   useMyBarberProfile,
@@ -476,11 +485,11 @@ export default function ProfilePage() {
             </h3>
             <p className="text-sm text-gray-500 mb-3">
               این لینک را برای آرایشگرهای دیگر بفرستید؛ با باز کردن آن کد معرف
-              خودکار در فرم ثبت‌نام وارد می‌شود. با خرید صفحهٔ اختصاصی توسط شما
-              یا ثبت {toPersianDigits(requiredPaidBookings)} رزرو موفقِ
-              پرداخت‌شده، ۳۰۰٬۰۰۰ تومان به کیف پولتان اضافه می‌شود (هر کدام
-              زودتر محقق شود). آرایشگر دعوت‌شده نیز برای خرید صفحهٔ اختصاصی ۵۰٪
-              تخفیف می‌گیرد.
+              خودکار در فرم ثبت‌نام وارد می‌شود. وقتی آرایشگرِ دعوت‌شده{' '}
+              {toPersianDigits(requiredPaidBookings)} رزرو موفقِ پرداخت‌شده ثبت
+              کند یا صفحهٔ اختصاصی بخرد، ۳۰۰٬۰۰۰ تومان به کیف پول شما اضافه
+              می‌شود (هر کدام زودتر محقق شود). آرایشگر دعوت‌شده نیز برای خرید
+              صفحهٔ اختصاصی ۵۰٪ تخفیف می‌گیرد.
             </p>
             {referralLink ? (
               <div className="flex items-center gap-2">
@@ -517,7 +526,7 @@ export default function ProfilePage() {
                 لینک دعوت هنوز در دسترس نیست.
               </p>
             )}
-            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <ReferralStat
                 icon={<UsersRound size={17} />}
                 label="تعداد معرفی‌ها"
@@ -547,6 +556,19 @@ export default function ProfilePage() {
                     : (referralStats?.pending ?? 0)
                 }
                 color="text-amber-600 bg-amber-50"
+              />
+              <ReferralStat
+                icon={<Wallet size={17} />}
+                label="پاداش هر دعوت"
+                value={
+                  referralsLoading || referralsError
+                    ? '—'
+                    : `${formatFaNumber(
+                        referralEligibility?.rewardAmount ??
+                          REFERRAL_REWARD_AMOUNT_TOMANS,
+                      )} تومان`
+                }
+                color="text-primary bg-primary-50"
               />
             </div>
 
@@ -619,7 +641,7 @@ export default function ProfilePage() {
                           <div className="mb-1 flex items-center justify-between gap-2 text-xs">
                             <span className="font-medium text-gray-600">
                               {toPersianDigits(completedCount)} رزرو موفقِ
-                              پرداخت‌شدهٔ شما
+                              پرداخت‌شدهٔ دعوت‌شده
                             </span>
                             <span className="text-gray-400">
                               شرط: {toPersianDigits(requiredPaidBookings)} رزرو
@@ -629,7 +651,7 @@ export default function ProfilePage() {
                           <div
                             className="h-1.5 overflow-hidden rounded-full bg-gray-100"
                             role="progressbar"
-                            aria-label={`پیشرفت رزروهای ${title}`}
+                            aria-label={`رزروهای موفقِ ${title}`}
                             aria-valuemin={0}
                             aria-valuemax={requiredPaidBookings}
                             aria-valuenow={Math.min(
@@ -652,11 +674,11 @@ export default function ProfilePage() {
                           <p className="mt-1 text-[11px] text-gray-400">
                             {rewardPaid
                               ? 'پاداش این دعوت واریز شده است'
-                              : referralEligibility?.hasPurchasedPublicPage
-                                ? 'صفحهٔ اختصاصی شما خریداری شده است؛ پاداش به‌زودی واریز می‌شود'
-                                : `برای دریافت پاداش، ${toPersianDigits(
+                              : referral.hasPurchasedPublicPage
+                                ? 'دعوت‌شده صفحهٔ اختصاصی خریده است؛ پاداش به‌زودی واریز می‌شود'
+                                : `وقتی این دعوت‌شده ${toPersianDigits(
                                     requiredPaidBookings,
-                                  )} رزرو موفق یا خرید صفحهٔ اختصاصی کافی است`}
+                                  )} رزرو موفق ثبت کند یا صفحهٔ اختصاصی بخرد، پاداش واریز می‌شود`}
                           </p>
                         </div>
 

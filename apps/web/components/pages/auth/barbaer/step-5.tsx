@@ -2,7 +2,7 @@
 
 import { ImageIcon, Loader2, Scissors, Store, User } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import StepFooter from '@/components/pages/auth/barbaer/step-footer';
@@ -28,10 +28,15 @@ import {
 } from '@/lib/auth';
 import { jalaliToIso } from '@/lib/date-utils';
 import { stripNumericSeparators, toEnglishDigits } from '@/lib/digits';
-import { getImageUploadError, MAX_PORTFOLIO_IMAGES } from '@/lib/image-upload';
+import {
+  getImageUploadError,
+  MAX_PORTFOLIO_IMAGES,
+  resolveImageMimeType,
+} from '@/lib/image-upload';
 import { toFa } from '@/lib/jalali';
 import { isValidIranianNationalCode } from '@/lib/national-code';
 import { isValidPhone, normalizePhone, onlyDigits } from '@/lib/phone';
+import { onSignupPersistFailure } from '@/lib/signup-draft-storage';
 import { formatPrice } from '@/lib/utils';
 import { useRegisterBarber, useSendOtp } from '@/services/features/auth/hooks';
 import { useAuthStore } from '@/store/auth.store';
@@ -40,20 +45,53 @@ import { useBarberSignupStore } from '@/store/useBarberSignupStore';
 const MIN_DEPOSIT = 100_000;
 const DEPOSIT_MAX_RATIO = 0.3;
 
-const base64ToBlob = (base64: string): Blob => {
-  const parts = base64.split(',');
-  const contentType = parts[0].match(/:(.*?);/)?.[1] || 'image/webp';
-  const byteCharacters = atob(parts[1]);
-  const byteNumbers = new Array(byteCharacters.length);
-  for (let i = 0; i < byteCharacters.length; i++) {
-    byteNumbers[i] = byteCharacters.charCodeAt(i);
+/**
+ * تبدیل `data:` URL به فایل قابل ارسال در FormData.
+ *
+ * چرا فایل و نه Blob خالی؟ چون نام فایل هم مهم است: بک‌اند پسوند
+ * `originalname` را بررسی می‌کند و MIME Type را هم از آن می‌گیرد؛ Blob بدون
+ * نام، خطای «فرمت فایل مجاز نیست» می‌داد.
+ *
+ * خروجی `null` یعنی این آیتم قابل ارسال نیست و باید به کاربر گزارش شود؛
+ * عمداً پرتاب نمی‌کند تا یک تصویر خراب، کل ثبت‌نام را از بین نبرد.
+ */
+export function dataUrlToUploadFile(
+  dataUrl: string,
+  index: number,
+): { file: File } | { error: string } {
+  try {
+    // پرچم `s` لازم نیست: payload پایهٔ Base64 خط جدید ندارد و حالت غیر
+    // Base64 با `[\s\S]` پوشش داده می‌شود (هدف کامپایل ES2017 است).
+    const match = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(dataUrl);
+    if (!match) return { error: 'ساختار تصویر ذخیره‌شده معتبر نیست.' };
+
+    const declaredType = match[1] || 'image/webp';
+    const isBase64 = Boolean(match[2]);
+    const payload = match[3] ?? '';
+
+    const bytes = isBase64
+      ? Uint8Array.from(atob(payload), char => char.charCodeAt(0))
+      : new TextEncoder().encode(decodeURIComponent(payload));
+
+    const type = resolveImageMimeType({ type: declaredType });
+    const extension =
+      type === 'image/jpeg' ? 'jpg' : type.split('/')[1] || 'webp';
+    const file = new File([bytes], `portfolio-${index + 1}.${extension}`, {
+      type,
+    });
+
+    if (file.size === 0) {
+      return { error: `تصویر شماره ${index + 1} خالی است؛ دوباره انتخاب کنید.` };
+    }
+    const validationError = getImageUploadError(file);
+    if (validationError) {
+      return { error: `تصویر شماره ${index + 1}: ${validationError}` };
+    }
+    return { file };
+  } catch {
+    return { error: `تصویر شماره ${index + 1} قابل خواندن نیست.` };
   }
-  const byteArray = new Uint8Array(byteNumbers);
-  const blob = new Blob([byteArray], { type: contentType });
-  const validationError = getImageUploadError(blob);
-  if (validationError) throw new Error(validationError);
-  return blob;
-};
+}
 
 export default function BarbaerStep5({
   callbackUrl,
@@ -63,12 +101,37 @@ export default function BarbaerStep5({
   const router = useRouter();
   const store = useBarberSignupStore();
   const [otpCode, setOtpCode] = useState('');
+  const [draftLimitWarning, setDraftLimitWarning] = useState<string | null>(
+    null,
+  );
   const busy = useRef(false);
   const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
 
   const registerMutation = useRegisterBarber();
   const sendOtpMutation = useSendOtp();
+
+  /**
+   * شنوندهٔ خطای ذخیرهٔ پیش‌نویس.
+   *
+   * اگر مرورگر نتواند پیش‌نویس را در `localStorage` نگه دارد (حالت ناشناس،
+   * سهمیهٔ پر، یا سیاست ذخیره‌سازی مرورگر) هیچ استثنایی به کاربر نشان داده
+   * نمی‌شود؛ فقط یک هشدار غیرمسدودکننده که «تصاویر پس از refresh نیاز به
+   * انتخاب دوباره دارند». عملیات جاری هرگز به‌خاطر این شکست نمی‌خورد.
+   */
+  useEffect(() => {
+    const previous = onSignupPersistFailure(failure => {
+      setDraftLimitWarning(
+        failure.imagesDropped
+          ? 'حافظهٔ مرورگر برای نگه‌داشتن تصاویر کافی نبود؛ تصاویر در این صفحه سالم هستند اما پس از بستن یا بازخوانی صفحه باید دوباره انتخاب شوند. بقیهٔ اطلاعات ذخیره شد.'
+          : 'ذخیرهٔ خودکار پیش‌نویس در این مرورگر ممکن نیست (مثلاً حالت ناشناس). تا پایان همین نشست اطلاعات حفظ می‌شود؛ پیش از بستن صفحه ثبت‌نام را کامل کنید.',
+      );
+    });
+
+    return () => {
+      onSignupPersistFailure(previous);
+    };
+  }, []);
 
   const {
     fullName,
@@ -186,6 +249,7 @@ export default function BarbaerStep5({
       return;
     }
     busy.current = true;
+    let invalidResponseReported = false;
     try {
       // ساخت FormData
       const formData = new FormData();
@@ -224,25 +288,38 @@ export default function BarbaerStep5({
       }
       formData.append('data', JSON.stringify(payload));
 
-      // لوگوی برند با نام فیلد سازگار با API فعلی ارسال می‌شود.
+      /**
+       * تبدیل تصاویر پیش‌نویس به فایل.
+       *
+       * هر تصویر مستقل تبدیل می‌شود: یک تصویر خراب نباید ثبت‌نام را متوقف کند
+       * (قبلاً `base64ToBlob` استثنا پرتاب می‌کرد و کل ارسال با پیامی مبهم
+       * شکست می‌خورد). حالا فقط همان تصویر کنار گذاشته و به کاربر گزارش
+       * می‌شود؛ بقیهٔ اطلاعات ثبت می‌شوند.
+       */
+      const skippedImages: string[] = [];
+
       if (image) {
-        const imageBlob = base64ToBlob(image);
-        formData.append(
-          'profileImage',
-          imageBlob,
-          `brand-logo.${imageBlob.type.split('/')[1]}`,
-        );
+        const logo = dataUrlToUploadFile(image, 0);
+        if ('file' in logo) {
+          formData.append('profileImage', logo.file);
+        } else {
+          skippedImages.push(`لوگوی برند: ${logo.error}`);
+        }
       }
 
-      // نمونه کارها
       portfolio.forEach((img, index) => {
-        const blob = base64ToBlob(img);
-        formData.append(
-          'portfolio',
-          blob,
-          `portfolio-${index + 1}.${blob.type.split('/')[1]}`,
-        );
+        const converted = dataUrlToUploadFile(img, index);
+        if ('file' in converted) {
+          formData.append('portfolio', converted.file);
+        } else {
+          skippedImages.push(converted.error);
+        }
       });
+
+      if (skippedImages.length > 0) {
+        // هشدار غیرمسدودکننده؛ ثبت‌نام با تصاویر سالم ادامه پیدا می‌کند.
+        toast.warning(skippedImages[0]);
+      }
 
       /**
        * ثبت‌نام موفق تنها جایی است که «آرایشگر تازه» قطعی می‌شود؛ پس فقط از
@@ -253,7 +330,27 @@ export default function BarbaerStep5({
       const welcomeHref = buildAuthHref(PROVIDER_WELCOME_PATH, callbackUrl);
       useAuthStore.getState().setPostAuthPath(welcomeHref);
 
-      await registerMutation.mutateAsync(formData);
+      /**
+       * پاسخ سرور باید حاوی تأیید ثبت‌نام باشد. اگر پاسخ نامعتبر/خالی
+       * برگردد، پیش‌نویس نباید پاک شود؛ وگرنه کاربر همهٔ داده‌ها را از دست
+       * می‌دهد و نمی‌داند ثبت‌نام انجام شده یا نه.
+       */
+      const registrationResponse = await registerMutation.mutateAsync(formData);
+      if (
+        !registrationResponse ||
+        typeof registrationResponse !== 'object'
+      ) {
+        /**
+         * این خطا از سمت کلاینت است و `getApiErrorMessage` آن را با پیام
+         * عمومی («خطایی رخ داد») جایگزین می‌کند؛ برای همین متن نهایی را
+         * مستقیم `toast` می‌کنیم.
+         */
+        invalidResponseReported = true;
+        toast.error(
+          'پاسخ سرور برای ثبت‌نام معتبر نبود. اطلاعات شما حفظ شده است؛ لطفاً دوباره تلاش کنید.',
+        );
+        return;
+      }
 
       toast.success('ثبت‌نام شما با موفقیت انجام شد!');
       setIsOtpModalOpen(false);
@@ -262,6 +359,15 @@ export default function BarbaerStep5({
       router.replace(welcomeHref);
       router.refresh();
     } catch (error) {
+      /**
+       * اگر توستِ «پاسخ نامعتبر» پیش‌تر نمایش داده شده، دیگر لازم نیست یک
+       * پیام عمومی هم روی آن بیاید (پیام تکراری/متناقض ممنوع).
+       */
+      if (invalidResponseReported) {
+        invalidResponseReported = false;
+        useAuthStore.getState().setPostAuthPath(null);
+        return;
+      }
       useAuthStore.getState().setPostAuthPath(null);
       toast.error(
         getApiErrorMessage(
@@ -278,6 +384,23 @@ export default function BarbaerStep5({
 
   return (
     <div className="space-y-5 animate-fade-in">
+      {/*
+        اگر مرورگر نتواند پیش‌نویس را در حافظهٔ محلی نگه دارد، تصاویر فقط تا
+        همین نشست در حافظه می‌مانند. این یک هشدار است، نه خطا: ثبت‌نام کار
+        می‌کند و فقط پس از refresh، تصاویر باید دوباره انتخاب شوند.
+      */}
+      {draftLimitWarning && (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-2xl border border-amber-200/70 bg-amber-50/70 px-4 py-3"
+        >
+          <ImageIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <p className="text-[11px] leading-relaxed font-medium text-amber-800">
+            {draftLimitWarning}
+          </p>
+        </div>
+      )}
+
       {/* کارت‌های پیش‌نمایش */}
       <div className="space-y-4">
         {/* اطلاعات فردی */}

@@ -18,7 +18,11 @@ import { ActivityTypePicker } from '@/components/shared/activity-type-picker';
 import { Button } from '@/components/ui/button';
 import { ACTIVITY_TYPES } from '@/constants/activity-types';
 import { useResetCityOnProvinceChange } from '@/hooks/use-reset-city-on-province-change';
-import { getImageUploadError, IMAGE_SIZE_ERROR } from '@/lib/image-upload';
+import {
+  getImageUploadError,
+  IMAGE_READ_ERROR,
+  IMAGE_SIZE_ERROR,
+} from '@/lib/image-upload';
 import {
   useCityList,
   useProvinceList,
@@ -135,10 +139,15 @@ export default function BarbaerStep2({ onSubmit }: Step2Props) {
         address: data.address,
         image: imageBase64,
       });
-    } catch {
-      toast.error(
-        'خواندن یا ذخیره لوگوی برند انجام نشد. فضای مرورگر و فایل تصویر را بررسی کنید.',
-      );
+    } catch (error) {
+      /**
+       * اینجا فقط «خواندن فایل» انجام می‌شود؛ ذخیره‌سازی (localStorage) دیگر
+       * در مسیر لوگو نیست، چون تصاویر در پیش‌نویس متنی ذخیره نمی‌شوند.
+       * پس پیام هم باید همین را بگوید و کاربر را به «فضای مرورگر» ارجاع
+       * ندهد (پیام قبلی گمراه‌کننده بود).
+       */
+      console.error('[barber-signup] reading brand logo failed', error);
+      toast.error(IMAGE_READ_ERROR);
     }
   };
 

@@ -2,6 +2,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+import { createSignupDraftStorage } from '@/lib/signup-draft-storage';
+
 export interface ServiceInput {
   id: string;
   name: string;
@@ -81,6 +83,20 @@ export const useBarberSignupStore = create<BarberSignupState>()(
     }),
     {
       name: 'barber-signup-storage',
+
+      /**
+       * پیش‌نویس (شامل لوگو و نمونه‌کارها) مثل قبل ذخیره می‌شود، اما با دو
+       * محافظ:
+       *
+       *   ۱. `storage` هرگز `QuotaExceededError` را به `updateData()` منتقل
+       *      نمی‌کند. پیش‌تر همین استثنا از `set()` بیرون می‌زد و UI آن را
+       *      «خطا در خواندن فایل‌ها» نشان می‌داد — در حالی که فایل‌ها خوانده
+       *      شده و در state حافظه‌ای هم بودند (پیام متناقض با تصاویر).
+       *   ۲. اگر پیش‌نویس از سقفِ تعیین‌شده بزرگ‌تر شود، فقط تصاویر از نسخهٔ
+       *      ذخیره‌شده حذف می‌شوند و بقیهٔ اطلاعات می‌ماند؛ UI هم با یک
+       *      هشدار غیرمسدودکننده خبر می‌دهد.
+       */
+      storage: createSignupDraftStorage(),
     },
   ),
 );

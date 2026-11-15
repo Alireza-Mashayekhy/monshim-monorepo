@@ -8,10 +8,13 @@ import { toast } from 'sonner';
 import AppCard from '@/components/shared/app-card';
 import { Button } from '@/components/ui/button';
 import {
-  getImageUploadError,
   IMAGE_ACCEPT,
   MAX_PORTFOLIO_IMAGES,
 } from '@/lib/image-upload';
+import {
+  readImageFiles,
+  summarizeFileOutcome,
+} from '@/lib/upload-image-files';
 import { getFullImageUrl, toPersianDigits } from '@/lib/utils';
 import { useUpdateBarberPortfolio } from '@/services/features/barber/hooks';
 
@@ -27,14 +30,6 @@ interface PortfolioManagerProps {
 
 const EMPTY_PORTFOLIO_IMAGES: string[] = [];
 
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
 
 export default function PortfolioManager({
   images = EMPTY_PORTFOLIO_IMAGES,
@@ -66,61 +61,63 @@ export default function PortfolioManager({
     const available =
       MAX_PORTFOLIO_IMAGES - savedImages.length - pendingImages.length;
     if (available <= 0) {
-      toast.error(
+      toast.warning(
         `حداکثر ${toPersianDigits(MAX_PORTFOLIO_IMAGES)} نمونه‌کار مجاز است.`,
       );
       return;
     }
 
-    const validFiles: File[] = [];
-    for (const file of files) {
-      const validationError = getImageUploadError(file);
-      if (validationError) {
-        toast.error(validationError);
-        continue;
-      }
-      validFiles.push(file);
+    /**
+     * هر فایل مستقل خوانده می‌شود: یک فایل خراب/غیرمجاز بقیه را از کار
+     * نمی‌اندازد و پیام موفقیت فقط وقتی نمایش داده می‌شود که همه موفق باشند
+     * (قبلاً هر فایل معتبر پیام «اضافه شد» جدا می‌گرفت و با خطای بعدی
+     * متناقض به‌نظر می‌رسید).
+     */
+    const { accepted, rejected } = await readImageFiles(files, {
+      maxCount: available,
+    });
+
+    if (accepted.length > 0) {
+      const newImages: PendingImage[] = accepted.map((image, index) => ({
+        id: `${image.file.name}-${image.file.lastModified}-${index}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`,
+        file: image.file,
+        preview: image.dataUrl,
+      }));
+      setPendingImages(current => {
+        const merged = [...current, ...newImages];
+        return merged.slice(0, MAX_PORTFOLIO_IMAGES - savedImages.length);
+      });
     }
 
-    if (validFiles.length > available) {
-      toast.warning(
-        `در هر بار حداکثر ${toPersianDigits(available)} عکس دیگر می‌توانید اضافه کنید.`,
-      );
-    }
-
-    const filesToAdd = validFiles.slice(0, available);
-    try {
-      const newImages = await Promise.all(
-        filesToAdd.map(async file => ({
-          id: `${file.name}-${file.lastModified}-${Math.random()}`,
-          file,
-          preview: await fileToDataUrl(file),
-        })),
-      );
-      setPendingImages(current =>
-        [...current, ...newImages].slice(
-          0,
-          MAX_PORTFOLIO_IMAGES - savedImages.length,
-        ),
-      );
-    } catch {
-      toast.error('پیش‌نمایش عکس‌ها بارگذاری نشد. دوباره تلاش کنید.');
-    }
+    const outcome = summarizeFileOutcome(accepted.length, rejected);
+    if (outcome?.type === 'success') toast.success(outcome.message);
+    else if (outcome?.type === 'warning') toast.warning(outcome.message);
+    else if (outcome?.type === 'error') toast.error(outcome.message);
   };
 
   const saveChanges = async () => {
-    const response = await updateMutation
-      .mutateAsync({
+    try {
+      const response = await updateMutation.mutateAsync({
         files: pendingImages.map(image => image.file),
         existingImages: savedImages,
-      })
-      .catch(() => null);
+      });
 
-    if (!response) return;
-
-    setSavedImages(response.data.portfolioImages ?? savedImages);
-    setPendingImages([]);
-    setIsEditing(false);
+      /**
+       * منبع حقیقت پس از ذخیره، پاسخ سرور است — نه تصاویر پیش‌نویس محلی.
+       * اگر سرور تعداد کمتری برگرداند (مثلاً یکی از فایل‌ها رد شده باشد)،
+       * UI هم همان تعداد را نشان می‌دهد تا «تعداد نمایش‌داده‌شده» با
+       * «تعداد واقعاً ذخیره‌شده» یکی بماند.
+       */
+      setSavedImages(response.data.portfolioImages ?? savedImages);
+      setPendingImages([]);
+      setIsEditing(false);
+    } catch {
+      // پیام خطا در `onError` همان هوک نمایش داده شده است؛ نکتهٔ مهم این است
+      // که حالت ویرایش و فایل‌های انتخاب‌شده حفظ می‌شوند تا کاربر بتواند
+      // فقط همان فایل ناموفق را دوباره بفرستد (بدون انتخاب از نو).
+    }
   };
 
   const effectiveSavedImages = isEditing ? savedImages : currentImages;

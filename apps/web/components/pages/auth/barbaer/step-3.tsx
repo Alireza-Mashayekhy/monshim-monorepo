@@ -1,16 +1,17 @@
 'use client';
 
 import { ImageIcon, Plus, Trash2, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import StepFooter from '@/components/pages/auth/barbaer/step-footer';
 import { Button } from '@/components/ui/button';
+import { IMAGE_ACCEPT, MAX_PORTFOLIO_IMAGES } from '@/lib/image-upload';
 import {
-  getImageUploadError,
-  IMAGE_ACCEPT,
-  MAX_PORTFOLIO_IMAGES,
-} from '@/lib/image-upload';
+  readImageFiles,
+  summarizeFileOutcome,
+} from '@/lib/upload-image-files';
+import { toPersianDigits } from '@/lib/utils';
 import { useBarberSignupStore } from '@/store/useBarberSignupStore';
 
 interface Step3Props {
@@ -20,15 +21,24 @@ interface Step3Props {
 export default function BarbaerStep3({ onSubmit }: Step3Props) {
   const { portfolio, prevStep, updateData } = useBarberSignupStore();
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [isReading, setIsReading] = useState(false);
   const portfolioInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * قفل هم‌زمانی: انتخاب دوبارهٔ فایل (یا دوبار کلیک) نباید دو بار خواندن را
+   * شروع کند و state را با هم ادغام کند. `ref` استفاده شده تا حتی وقتی کاربر
+   * بلافاصله دوباره کلیک می‌کند، مقدار به‌روز باشد.
+   */
+  const readingRef = useRef(false);
+
+  const remaining = Math.max(0, MAX_PORTFOLIO_IMAGES - portfolio.length);
 
   const removePortfolioImage = (e: React.MouseEvent, index: number) => {
     e.stopPropagation();
-    const newPortfolio = portfolio.filter((_, i) => i !== index);
-    updateData({ portfolio: newPortfolio });
+    updateData({ portfolio: portfolio.filter((_, i) => i !== index) });
   };
 
   const handlePortfolioClick = () => {
+    if (isReading) return;
     if (portfolio.length >= MAX_PORTFOLIO_IMAGES) {
       toast.warning('در ثبت نام اولیه حداکثر ۵ عکس مجاز است.');
       return;
@@ -36,57 +46,65 @@ export default function BarbaerStep3({ onSubmit }: Step3Props) {
     portfolioInputRef.current?.click();
   };
 
-  const readFileAsDataURL = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (reader.result && typeof reader.result === 'string') {
-          resolve(reader.result);
-        } else {
-          reject(new Error('Failed to read file'));
-        }
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
+  const handlePortfolioChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const files = Array.from(input.files ?? []);
+      // ورودی بلافاصله پاک می‌شود تا انتخاب دوبارهٔ همان فایل هم رویداد بدهد
+      // و مقدار قدیمی در عنصر input باقی نماند.
+      input.value = '';
+      if (files.length === 0 || readingRef.current) return;
 
-  const handlePortfolioChange = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const files = e.target.files;
-    if (!files) return;
+      // وضعیت فعلی را دوباره از store می‌خوانیم تا با تغییرات دیگر اجزا
+      // (مثلاً حذف هم‌زمان یک تصویر) هم‌خوان باشیم.
+      const currentPortfolio = useBarberSignupStore.getState().portfolio;
+      const available = Math.max(
+        0,
+        MAX_PORTFOLIO_IMAGES - currentPortfolio.length,
+      );
 
-    if (portfolio.length + files.length > MAX_PORTFOLIO_IMAGES) {
-      toast.error('مجموع عکس‌ها نباید بیشتر از ۵ باشد.');
-      e.target.value = '';
-      return;
-    }
-
-    try {
-      const fileArray = Array.from(files);
-      for (const file of fileArray) {
-        const validationError = getImageUploadError(file);
-        if (validationError) {
-          toast.error(validationError);
-          return;
-        }
+      if (available === 0) {
+        toast.warning('در ثبت نام اولیه حداکثر ۵ عکس مجاز است.');
+        return;
       }
-      const newImages = await Promise.all(fileArray.map(readFileAsDataURL));
-      const updated = [...portfolio, ...newImages];
-      updateData({ portfolio: updated });
-      toast.success(`${files.length} تصویر با موفقیت اضافه شد.`);
-    } catch (error) {
-      console.error('❌ Error reading files:', error);
-      toast.error('خطا در خواندن فایل‌ها');
-    } finally {
-      e.target.value = '';
-    }
-  };
+
+      readingRef.current = true;
+      setIsReading(true);
+      try {
+        const { accepted, rejected } = await readImageFiles(files, {
+          maxCount: available,
+        });
+
+        if (accepted.length > 0) {
+          // ادغام نتیجه با جدیدترین state (نه کپی قدیمی) تا هیچ تصویری گم نشود.
+          const latest = useBarberSignupStore.getState().portfolio;
+          const merged = [
+            ...latest,
+            ...accepted.map(image => image.dataUrl),
+          ].slice(0, MAX_PORTFOLIO_IMAGES);
+          updateData({ portfolio: merged });
+        }
+
+        const outcome = summarizeFileOutcome(accepted.length, rejected);
+        if (outcome?.type === 'success') toast.success(outcome.message);
+        else if (outcome?.type === 'warning') toast.warning(outcome.message);
+        else if (outcome?.type === 'error') toast.error(outcome.message);
+      } finally {
+        readingRef.current = false;
+        setIsReading(false);
+      }
+    },
+    [updateData],
+  );
 
   const handleNext = () => {
-    onSubmit({ portfolio });
+    onSubmit({ portfolio: useBarberSignupStore.getState().portfolio });
   };
+
+  // شمارنده را با ارقام فارسی نشان می‌دهیم تا با بقیهٔ متن‌های صفحه یک‌دست باشد.
+  const counterLabel = `${toPersianDigits(portfolio.length)} از ${toPersianDigits(
+    MAX_PORTFOLIO_IMAGES,
+  )}`;
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -104,13 +122,13 @@ export default function BarbaerStep3({ onSubmit }: Step3Props) {
             تصاویر بارگذاری‌شده
           </h3>
           <span className="text-[11px] font-bold text-gray-400">
-            {portfolio.length} از ۵
+            {counterLabel}
           </span>
         </div>
         <div className="grid grid-cols-3 gap-3">
           {portfolio.map((img, idx) => (
             <div
-              key={idx}
+              key={`${idx}-${img.slice(-24)}`}
               className="relative aspect-square rounded-2xl overflow-hidden group shadow-sm border border-gray-100 cursor-pointer bg-gray-100"
               onClick={() => setLightboxImage(img)}
             >
@@ -118,30 +136,34 @@ export default function BarbaerStep3({ onSubmit }: Step3Props) {
                 src={img}
                 alt={`نمونه کار ${idx + 1}`}
                 className="w-full h-full object-cover"
-                onError={e => {
-                  console.error('❌ Image load error:', img.slice(0, 50));
-                  e.currentTarget.style.display = 'none';
-                }}
               />
               <button
+                type="button"
                 onClick={e => removePortfolioImage(e, idx)}
+                aria-label="حذف تصویر نمونه‌کار"
                 className="absolute top-1.5 right-1.5 bg-red-500 text-white p-1 rounded-full opacity-80 hover:opacity-100 transition-opacity z-10 cursor-pointer"
               >
                 <Trash2 size={12} />
               </button>
             </div>
           ))}
-          {portfolio.length < 5 && (
-            <div
+          {portfolio.length < MAX_PORTFOLIO_IMAGES && (
+            <button
+              type="button"
               onClick={handlePortfolioClick}
-              className="aspect-square rounded-2xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-primary-300 transition-colors bg-gray-50"
+              disabled={isReading}
+              className="aspect-square rounded-2xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-primary-300 transition-colors bg-gray-50 disabled:cursor-wait"
             >
               <Plus size={24} />
-              <span className="text-[10px] mt-1 font-bold">افزودن</span>
-              <span className="text-[9px] mt-0.5 text-gray-400/80 font-medium">
-                حداکثر ۳ مگابایت
+              <span className="text-[10px] mt-1 font-bold">
+                {isReading ? 'در حال خواندن…' : 'افزودن'}
               </span>
-            </div>
+              <span className="text-[9px] mt-0.5 text-gray-400/80 font-medium">
+                {remaining > 0
+                  ? `${toPersianDigits(remaining)} عکس دیگر`
+                  : 'حداکثر ۳ مگابایت'}
+              </span>
+            </button>
           )}
           <input
             type="file"
@@ -160,6 +182,8 @@ export default function BarbaerStep3({ onSubmit }: Step3Props) {
           onClick={() => setLightboxImage(null)}
         >
           <button
+            type="button"
+            aria-label="بستن"
             className="absolute top-5 right-5 text-white bg-white/20 p-2 rounded-full z-[101] hover:bg-white/30 transition-colors cursor-pointer"
             onClick={() => setLightboxImage(null)}
           >
@@ -184,6 +208,7 @@ export default function BarbaerStep3({ onSubmit }: Step3Props) {
           <Button
             type="button"
             onClick={handleNext}
+            disabled={isReading}
             className="flex-1 h-12 text-base font-bold shadow-md shadow-primary/20 cursor-pointer"
           >
             مرحله بعد

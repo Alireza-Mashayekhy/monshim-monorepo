@@ -146,7 +146,10 @@ export interface MyReferral {
   referredFullName: string | null;
   referredSalonName: string | null;
   status: 'PENDING' | 'COMPLETED';
+  /** رزروهای موفقِ پرداخت‌شدهٔ همان آرایشگر دعوت‌شده */
   completedBookingsCount: number;
+  /** آیا همان آرایشگر دعوت‌شده صفحهٔ اختصاصی خریده است؟ */
+  hasPurchasedPublicPage?: boolean;
   rewardPaid: boolean;
   createdAt: string;
 }
@@ -154,11 +157,22 @@ export interface MyReferral {
 export interface MyReferralsInfo {
   referrals: MyReferral[];
   eligibility: {
+    /** بیشترین رزرو موفقِ پرداخت‌شده در میان آرایشگرهای دعوت‌شده */
     completedPaidBookingsCount: number;
     requiredPaidBookings: number;
+    /** آیا یکی از آرایشگرهای دعوت‌شده صفحهٔ اختصاصی خریده است؟ */
     hasPurchasedPublicPage: boolean;
-    /** تحقق یکی از دو شرط (۳۰ رزرو موفق یا خرید صفحهٔ اختصاصی) */
+    /**
+     * تحقق یکی از دو شرط **توسط آرایشگر دعوت‌شده**:
+     * ۳۰ رزرو موفق یا خرید صفحهٔ اختصاصی.
+     */
     isEligible?: boolean;
+    /** مبلغ پاداش هر دعوت (تومان) */
+    rewardAmount?: number;
+    /** جمع پاداش‌های واریزشده */
+    paidRewardAmount?: number;
+    /** جمع پاداش‌های در انتظار تحقق شرط */
+    unpaidRewardAmount?: number;
   };
   stats: {
     total: number;

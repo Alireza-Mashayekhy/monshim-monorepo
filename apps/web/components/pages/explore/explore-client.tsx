@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useDebounce } from '@/hooks/use-debounce';
+import { resolveBarberGenderFilter } from '@/lib/barber-gender';
 import { cn, formatFaNumber, toPersianDigits } from '@/lib/utils';
 import { useCurrentUser } from '@/services/features/auth/hooks';
 import { useBarberList } from '@/services/features/barber/hooks';
@@ -80,10 +81,8 @@ export default function ExploreClient() {
 
   const userCityId = user?.cityId ?? user?.city?.id;
   const userCityName = user?.city?.name;
-  const gender =
-    user?.gender === 'male' || user?.gender === 'female'
-      ? user.gender
-      : undefined;
+  // تنها منبع منطق فیلتر جنسیت (مشترک با صفحهٔ اصلی پنل).
+  const gender = resolveBarberGenderFilter(user);
 
   // Apply saved/account location only after the client store has hydrated.
   const effectiveCityId = isMounted

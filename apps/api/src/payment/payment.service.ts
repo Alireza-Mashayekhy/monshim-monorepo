@@ -492,7 +492,8 @@ export class PaymentService {
         }),
       );
       await this.publicPageService.activateAfterPayment(complimentaryPayment);
-      await this.referralService.onPublicPagePurchased(userId);
+      // خرید صفحه توسط دعوت‌شده: دعوت او ارزیابی می‌شود تا پاداش به معرف برسد.
+      await this.referralService.onReferredPublicPagePurchased(userId);
       return {
         free: true,
         amount: 0,
@@ -1603,7 +1604,7 @@ export class PaymentService {
           for (const barberProfileId of new Set(
             bookings.map(row => row.barberId),
           )) {
-            await this.referralService.onReferrerBookingActivity(
+            await this.referralService.onReferredBookingActivity(
               barberProfileId,
             );
           }
@@ -1614,7 +1615,7 @@ export class PaymentService {
 
     if (payment.purpose === PaymentPurpose.PUBLIC_PAGE) {
       await this.publicPageService.activateAfterPayment(payment);
-      await this.referralService.onPublicPagePurchased(payment.userId);
+      await this.referralService.onReferredPublicPagePurchased(payment.userId);
       void this.baleNotificationService?.notifyPublicPagePurchased(payment);
 
       return { refunded: false };

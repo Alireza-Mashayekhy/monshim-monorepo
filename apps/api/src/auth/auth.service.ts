@@ -50,6 +50,7 @@ import { LoginWithPasswordDto } from './dto/login-with-password.dto';
 import { RegisterBarberDto } from './dto/register-barber.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { SendVerifyOtp } from './dto/verify-otp.dto';
+import type { RegisterBarberOutcome } from './register-barber-outcome';
 
 const INVALID_REFRESH_TOKEN_MESSAGE = 'توکن تازه‌سازی نامعتبر است';
 const EXPIRED_SESSION_MESSAGE =
@@ -191,7 +192,11 @@ export class AuthService {
     return { message: 'ورود با موفقیت انجام شد', data: { newUser: false } };
   }
 
-  async registerBarber(dto: RegisterBarberDto, response: Response) {
+  async registerBarber(
+    dto: RegisterBarberDto,
+    response: Response,
+    outcome?: RegisterBarberOutcome,
+  ) {
     const existingUser = await this.usersService.findWithPhone(dto.phone);
     if (existingUser) {
       throw new ConflictException(PHONE_ALREADY_REGISTERED_MESSAGE);
@@ -295,16 +300,27 @@ export class AuthService {
       throw error;
     }
 
+    /**
+     * مرز مهم: از این‌جا به بعد کاربر و پروفایل در دیتابیس هستند و مسیر
+     * فایل‌های آپلودی ذخیره شده است. کنترلر با این پرچم می‌فهمد که در صورت
+     * خطای بعدی نباید فایل‌ها را پاک کند.
+     */
+    if (outcome) outcome.persisted = true;
+
     // ۵. ارسال اعلان ثبت‌نام آرایشگر جدید به ربات بله (جهت بررسی و تایید ادمین)
     void this.baleNotificationService?.notifyBarberRegistered?.(user.id);
 
-    // ۵.۱. اگر دعوت‌کننده پیش از این دعوت یکی از دو شرط پاداش (۳۰ رزرو موفق
-    // یا خرید صفحهٔ اختصاصی) را محقق کرده باشد، پاداش همان‌جا ارزیابی و
-    // واریز می‌شود. عمداً await نمی‌شود تا پاسخ ثبت‌نام گره نخورد و خطای آن
-    // فقط لاگ شود.
+    // ۵.۱. ارزیابی وضعیت دعوتِ همین آرایشگرِ تازه ثبت‌نام‌شده.
+    //
+    // ⚠️ شرط پاداش به فعالیت **آرایشگر دعوت‌شده** (همین کاربر) وابسته است،
+    // نه دعوت‌کننده. بنابراین این ارزیابی در لحظهٔ ثبت‌نام فقط زمانی به
+    // واریز می‌رسد که همین کاربر از قبل ۳۰ رزرو موفق یا صفحهٔ اختصاصی داشته
+    // باشد (عملاً یعنی دعوت دوباره/تکرارشده)؛ در حالت عادی فقط شمارنده
+    // ذخیره می‌شود و پاداش با فعالیت بعدیِ او واریز می‌شود.
+    // عمداً await نمی‌شود تا پاسخ ثبت‌نام گره نخورد و خطای آن فقط لاگ شود.
     if (referredByUserId) {
       void this.referralService
-        .onReferralCreated?.(referredByUserId)
+        .onReferredProgress?.(user.id)
         ?.catch?.(() => undefined);
     }
 

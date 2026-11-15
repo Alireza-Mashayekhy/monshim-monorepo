@@ -1,5 +1,10 @@
 // files/files.service.ts
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -38,10 +43,27 @@ export class FilesService {
     const filename = `${randomUUID()}${OUTPUT_IMAGE_EXTENSION}`;
     const safeFolder = subFolder.replace(/[^a-zA-Z0-9_-]/g, '');
     const folderPath = path.join(this.uploadDir, safeFolder);
-    await fs.promises.mkdir(folderPath, { recursive: true });
 
     const filePath = path.join(folderPath, filename);
-    await fs.promises.writeFile(filePath, optimizedBuffer);
+    try {
+      await fs.promises.mkdir(folderPath, { recursive: true });
+      // `flag: 'wx'` مانع بازنویسی تصادفی یک فایل موجود می‌شود (نام‌ها UUID
+      // هستند، پس برخورد یعنی یک باگ؛ بهتر است خطا بدهد تا داده از دست نرود).
+      await fs.promises.writeFile(filePath, optimizedBuffer, { flag: 'wx' });
+    } catch (error) {
+      /**
+       * خطای دیسک (پر بودن فضا، نبود مجوز، volume mount اشتباه) نباید به
+       * کاربر ۵۰۰ خام بدهد و نباید پیام «فایل تصویر معتبر نیست» بگیرد؛
+       * تصویر معتبر بوده و ذخیره‌سازی شکست خورده است. این تمایز برای
+       * عیب‌یابی اپراتور هم حیاتی است.
+       */
+      this.logger.error(
+        `failed to persist upload in "${safeFolder || '.'}": ${String(error)}`,
+      );
+      throw new ServiceUnavailableException(
+        'ذخیرهٔ تصویر در حال حاضر ممکن نیست. لطفاً کمی بعد دوباره تلاش کنید.',
+      );
+    }
 
     // بازگرداندن مسیر نسبی (شامل ساب‌فولدر)
     return safeFolder
@@ -49,11 +71,33 @@ export class FilesService {
       : `/uploads/${filename}`;
   }
 
+  /**
+   * ذخیرهٔ چند فایل به‌صورت «همه یا هیچ».
+   *
+   * چرا مهم است؟
+   * پیش‌تر از `Promise.all` استفاده می‌شد که با شکست یک فایل، فایل‌های
+   * موفقِ همان دسته را روی دیسک رها می‌کرد و فراخواننده فقط خطا را می‌دید
+   * (فایل‌های یتیم + ناهماهنگی بین دیسک و دیتابیس). حالا هر فایلِ ذخیره‌شده
+   * در صورت شکست دسته پاک می‌شود.
+   *
+   * ذخیره به‌صورت سری است، نه موازی: تصاویر حداکثر ۳ مگابایتی‌اند و `sharp`
+   * هم CPU-bound است؛ موازی‌سازی فقط فشار حافظه و رقابت روی CPU را زیاد
+   * می‌کرد و ترتیب پاسخ‌ها را هم نامطمئن می‌ساخت.
+   */
   async saveMultipleFiles(
     files: Express.Multer.File[],
     subFolder: string = '',
   ): Promise<string[]> {
-    return Promise.all(files.map(file => this.saveFile(file, subFolder)));
+    const saved: string[] = [];
+    try {
+      for (const file of files) {
+        saved.push(await this.saveFile(file, subFolder));
+      }
+      return saved;
+    } catch (error) {
+      this.deleteFiles(saved);
+      throw error;
+    }
   }
 
   deleteFiles(filePaths: string[]): void {
@@ -160,8 +204,13 @@ export class FilesService {
     }
 
     if (file.size && file.size > IMAGE_MAX_SIZE_BYTES) {
+      // پیام باید عدد واقعی سقف را نشان دهد. فرمول قبلی
+      // (`/ (1024 * 1024 * 3)`) عدد را به «۱ مگابایت» تبدیل می‌کرد که هم
+      // گمراه‌کننده بود و هم با متن UI («۳ مگابایت») نمی‌خواند.
       throw new BadRequestException(
-        `حجم فایل نباید بیشتر از ${IMAGE_MAX_SIZE_BYTES / (1024 * 1024 * 3)}MB باشد`,
+        `حجم فایل نباید بیشتر از ${Math.round(
+          IMAGE_MAX_SIZE_BYTES / (1024 * 1024),
+        )} مگابایت باشد`,
       );
     }
 

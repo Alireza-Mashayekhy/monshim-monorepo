@@ -242,8 +242,11 @@ describe('PaymentService deposit invoice & gateway payment flow', () => {
       bookingSmsService,
       {} as any,
       {
-        onReferrerBookingActivity: jest.fn().mockResolvedValue(undefined),
-        onPublicPagePurchased: jest.fn().mockResolvedValue(undefined),
+        // قرارداد فعلی: ارزیابی دعوتِ آرایشگرِ **دعوت‌شده** (همان کسی که
+        // رزرو/خرید انجام داده)، نه دعوت‌کننده.
+        onReferredBookingActivity: jest.fn().mockResolvedValue(undefined),
+        onReferredPublicPagePurchased: jest.fn().mockResolvedValue(undefined),
+        onReferredProgress: jest.fn().mockResolvedValue(undefined),
       } as any,
       walletService,
       configService,

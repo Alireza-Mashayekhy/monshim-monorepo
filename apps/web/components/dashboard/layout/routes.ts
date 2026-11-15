@@ -3,6 +3,7 @@ import {
   Clock,
   Gem,
   Globe,
+  GraduationCap,
   Headphones,
   LayoutDashboard,
   Scissors,
@@ -10,6 +11,8 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
+
+import { siteConfig } from '@/lib/site-config';
 
 export const dashboardRoutes = [
   {
@@ -95,6 +98,25 @@ export interface MoreMenuGroup {
   items: MoreMenuItem[];
 }
 
+/**
+ * آیتم‌های منوی «بیشتر» که **بخشی از داشبورد نیستند**.
+ *
+ * چرا جدا از `dashboardRoutes`؟ آن آرایه «بخش‌های خود داشبورد» است و سایدبار
+ * دسکتاپ هم از همان ساخته می‌شود؛ صفحهٔ آموزش (`/tutorials`) یک صفحهٔ عمومی
+ * مارکتینگ است و افزودنش به آن آرایه، بی‌آنکه خواسته شده باشد سایدبار را هم
+ * تغییر می‌داد. در عوض این‌جا اعلام می‌شود و فقط در منوی «بیشتر» می‌آید.
+ *
+ * در دسکتاپ، همان صفحه از آیکون راهنما (`HelpLink`) در هدر داشبورد در دسترس
+ * است؛ منوی «بیشتر» فقط در موبایل/تبلت (`lg:hidden`) دیده می‌شود.
+ */
+const MORE_MENU_STANDALONE_ITEMS: Record<string, MoreMenuItem> = {
+  [siteConfig.routes.tutorials]: {
+    title: 'آموزش',
+    href: siteConfig.routes.tutorials,
+    icon: GraduationCap,
+  },
+};
+
 /** گروه‌بندی و توضیح کوتاهِ آیتم‌های منوی «بیشتر» (فقط نمایشی). */
 const MORE_MENU_LAYOUT: {
   title: string;
@@ -117,6 +139,10 @@ const MORE_MENU_LAYOUT: {
       { href: '/dashboard/profile', description: 'اطلاعات شما و سالن' },
       { href: '/dashboard/subscription', description: 'پلن فعلی و تمدید' },
       { href: '/dashboard/support', description: 'تیکت‌ها و ارتباط با ما' },
+      {
+        href: siteConfig.routes.tutorials,
+        description: 'ویدیوهای آموزش کار با منشیم',
+      },
     ],
   },
 ];
@@ -134,21 +160,27 @@ export const moreMenuGroups: MoreMenuGroup[] = (() => {
       .filter(route => !BOTTOM_NAV_HREFS.includes(route.href))
       .map(route => [route.href, route] as const),
   );
+  const standalone = new Map(Object.entries(MORE_MENU_STANDALONE_ITEMS));
 
   const groups: MoreMenuGroup[] = MORE_MENU_LAYOUT.map(group => ({
     title: group.title,
     items: group.items.flatMap(({ href, description }) => {
-      const route = remaining.get(href);
+      // مسیرهای داشبورد از `dashboardRoutes` و لینک‌های بیرونی از فهرست بالا.
+      const route = remaining.get(href) ?? standalone.get(href);
       if (!route) return [];
 
       remaining.delete(href);
+      standalone.delete(href);
 
       return [{ ...route, description }];
     }),
   })).filter(group => group.items.length > 0);
 
-  if (remaining.size > 0) {
-    groups.push({ title: 'سایر', items: [...remaining.values()] });
+  // هیچ آیتمی بی‌صدا حذف نمی‌شود: هم مسیرهای تازهٔ داشبورد و هم لینک‌های
+  // بیرونی‌ای که در `MORE_MENU_LAYOUT` نیامده باشند در گروه «سایر» می‌آیند.
+  const leftovers = [...remaining.values(), ...standalone.values()];
+  if (leftovers.length > 0) {
+    groups.push({ title: 'سایر', items: leftovers });
   }
 
   return groups;

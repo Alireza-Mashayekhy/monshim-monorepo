@@ -1,7 +1,7 @@
 // components/form/rhf-image-uploader.tsx
 import { Camera, X } from 'lucide-react';
 import Image from 'next/image';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { FieldValues, Path, PathValue, UseFormSetValue } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -13,7 +13,7 @@ import {
   IMAGE_SIZE_ERROR,
   MAX_IMAGE_SIZE,
 } from '@/lib/image-upload';
-import { cn } from '@/lib/utils';
+import { cn, getFullImageUrl } from '@/lib/utils';
 
 interface RHFImageUploaderProps<T extends FieldValues> {
   name: Path<T>;
@@ -36,8 +36,37 @@ export function RHFImageUploader<T extends FieldValues>({
   shape = 'circle',
   className,
 }: RHFImageUploaderProps<T>) {
-  // مقدار اولیه preview همان defaultValue است
+  // مقدار اولیه preview همان defaultValue است (می‌تواند مسیر نسبی سرور مثل
+  // `/uploads/profiles/x.webp` باشد، نه فقط data: URL).
   const [preview, setPreview] = useState<string | null>(defaultValue);
+  /**
+   * `URL.createObjectURL` حافظه را تا `revokeObjectURL` نگه می‌دارد. قبلاً
+   * هیچ‌جا revoke نمی‌شد؛ با انتخاب چندبارهٔ عکس، حافظهٔ تب مدام رشد می‌کرد.
+   */
+  const objectUrlRef = useRef<string | null>(null);
+
+  const revokeObjectUrl = useCallback(() => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => revokeObjectUrl, [revokeObjectUrl]);
+
+  /**
+   * اگر مقدار ذخیره‌شده از بیرون تغییر کند (مثلاً بازگشت از مرحلهٔ قبل)،
+   * پیش‌نمایش باید همان باشد؛ وگرنه UI و فرم از هم دور می‌افتند.
+   *
+   * این الگوی «محاسبه در رندر» است: هر رندر مقدار جدید را با مقداری که
+   * آخرین بار از بیرون دیده‌ایم مقایسه می‌کند؛ اگر عوض شده باشد، پیش‌نمایش
+   * را از همان مقدار می‌سازیم. نه افکت لازم است، نه setState در افکت.
+   * (فقط آبجکت URL قبلی در cleanup افکت پایین آزاد می‌شود.)
+   */
+  const [lastDefault, setLastDefault] = useState(defaultValue);
+  const externalDefaultChanged = defaultValue !== lastDefault;
+  const effectivePreview = externalDefaultChanged ? defaultValue : preview;
+  if (externalDefaultChanged) setLastDefault(defaultValue);
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -50,13 +79,15 @@ export function RHFImageUploader<T extends FieldValues>({
         return;
       }
 
+      revokeObjectUrl();
       const previewUrl = URL.createObjectURL(selectedFile);
+      objectUrlRef.current = previewUrl;
       setPreview(previewUrl);
       setValue(name, selectedFile as PathValue<T, Path<T>>, {
         shouldValidate: true,
       });
     },
-    [name, setValue],
+    [name, setValue, revokeObjectUrl],
   );
 
   const { getRootProps, getInputProps } = useDropzone({
@@ -78,6 +109,7 @@ export function RHFImageUploader<T extends FieldValues>({
 
   const removeImage = (e: React.MouseEvent) => {
     e.stopPropagation();
+    revokeObjectUrl();
     setPreview(null);
     setValue(name, undefined as any, { shouldValidate: true });
   };
@@ -100,12 +132,16 @@ export function RHFImageUploader<T extends FieldValues>({
       >
         <input {...getInputProps()} />
 
-        {preview ? (
+        {effectivePreview ? (
           <div className="relative h-full w-full">
             <Image
-              src={preview}
+              src={getFullImageUrl(effectivePreview) ?? effectivePreview}
               alt="Preview"
               fill
+              // پیش‌نمایش ممکن است `blob:`/`data:` باشد؛ بهینه‌ساز Next برای
+              // این پروتکل‌ها خطا می‌دهد. همچنین در توسعه، هاست لوکال تصاویر
+              // در `next.config` مسدود می‌شود. پس بدون بهینه‌سازی رندر می‌کنیم.
+              unoptimized
               className="object-cover"
               style={{ aspectRatio: aspectRatio ? aspectRatio : 'auto' }}
             />
