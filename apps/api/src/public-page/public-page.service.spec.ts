@@ -1,3 +1,8 @@
+jest.mock('@nestjs/schedule', () => ({
+  Cron: () => () => undefined,
+  CronExpression: new Proxy({}, { get: () => '0 * * * *' }),
+}));
+
 import {
   BadRequestException,
   ConflictException,
@@ -68,16 +73,29 @@ describe('PublicPageService', () => {
     });
   });
 
-  it('برای کاربری که واقعاً با کد معرف ثبت‌نام کرده، تخفیف ۵۰٪ خودکار می‌دهد', async () => {
+  it('به‌صورت پیش‌فرض تخفیف ۵۰٪ی معرفی غیرفعال است و اعمال نمی‌شود', async () => {
+    delete process.env.ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT;
     const { service } = createService({ hasReferral: true });
 
-    await expect(service.getReferralDiscountQuote(20)).resolves.toEqual({
-      code: null,
-      percentOff: 50,
-      originalAmount: 773_000,
-      discountAmount: 386_500,
-      amount: 386_500,
-    });
+    await expect(service.hasReferralDiscount(20)).resolves.toBe(false);
+    await expect(service.getReferralDiscountQuote(20)).resolves.toBeNull();
+  });
+
+  it('با روشن‌کردن feature flag، تخفیف ۵۰٪ی معرفی برای کاربر دعوت‌شده اعمال می‌شود', async () => {
+    process.env.ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT = 'true';
+    try {
+      const { service } = createService({ hasReferral: true });
+
+      await expect(service.getReferralDiscountQuote(20)).resolves.toEqual({
+        code: null,
+        percentOff: 50,
+        originalAmount: 773_000,
+        discountAmount: 386_500,
+        amount: 386_500,
+      });
+    } finally {
+      delete process.env.ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT;
+    }
   });
 
   it('کد تخفیف صددرصدی خرید را رایگان می‌کند و کد نامعتبر رد می‌شود', async () => {
@@ -137,6 +155,7 @@ describe('PublicPageService', () => {
     updateAffected?: number;
     discount?: any;
     hasReferral?: boolean;
+    subscription?: any;
   }) {
     const bookingQb = createMockBookingQb({
       count: params?.paidBookingsCount ?? 0,
@@ -230,6 +249,14 @@ describe('PublicPageService', () => {
       referralRepo,
       barberService,
       configService,
+      {
+        getCurrentPublicPageSubscription: jest
+          .fn()
+          .mockResolvedValue(params?.subscription ?? null),
+        findActivePublicPageSubscriptionsForUsers: jest
+          .fn()
+          .mockResolvedValue([]),
+      } as never,
     );
 
     return {

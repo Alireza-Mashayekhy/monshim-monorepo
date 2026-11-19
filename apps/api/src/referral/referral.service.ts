@@ -2,6 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BarberProfile } from 'src/barber/entities/barber.entity';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { PublicPageService } from 'src/public-page/public-page.service';
 import { WalletService } from 'src/wallet/wallet.service';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -25,12 +26,27 @@ export class ReferralService {
     private walletService: WalletService,
   ) {}
 
-  /** ثبت دعوت هنگام ثبت‌نام آرایشگر جدید با کد معرف */
+  /**
+   * ثبت دعوت هنگام ثبت‌نام آرایشگر جدید با کد معرف.
+   *
+   * سیستم کد معرف به‌صورت موقت غیرفعال است: تا وقتی feature flag
+   * `ENABLE_REFERRAL` روشن نباشد، هیچ رکورد دعوت جدیدی ساخته نمی‌شود. این
+   * محافظت تكمیلی است (مسیر ثبت‌نام هم از قبل کد معرف را نمی‌پذیرد) تا
+   * هیچ فراخوانی دیگری به‌اشتباه دعوت جدید نسازد. رکوردها و پاداش‌های
+   * قبلی دست‌نخورده باقی می‌مانند.
+   */
   async createReferral(
     referrerUserId: number,
     referredUserId: number,
     manager?: EntityManager,
   ): Promise<Referral | null> {
+    if (!isRuntimeFlagEnabled('ENABLE_REFERRAL', false)) {
+      this.logger.log(
+        `سیستم کد معرف غیرفعال است؛ دعوت بین ${referrerUserId} و ${referredUserId} ساخته نشد`,
+      );
+      return null;
+    }
+
     const barberProfileRepo = manager
       ? manager.getRepository(BarberProfile)
       : this.barberProfileRepo;

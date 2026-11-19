@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   checkPublicPageSlug,
   getMyPublicPageStatus,
+  getPublicPagePlans,
   quotePublicPageDiscount,
   updateMyPublicPageSlug,
 } from './api';
@@ -10,6 +11,7 @@ import {
 export const publicPageKeys = {
   all: ['public-page'] as const,
   status: () => [...publicPageKeys.all, 'status'] as const,
+  plans: () => [...publicPageKeys.all, 'plans'] as const,
   slugCheck: (slug: string) =>
     [...publicPageKeys.all, 'slug-check', slug] as const,
 };
@@ -31,6 +33,15 @@ export function useCheckPublicPageSlug(slug: string, enabled = true) {
     enabled: enabled && slug.trim().length > 0,
     staleTime: 10 * 1000,
     retry: false,
+  });
+}
+
+/** پلن‌های خرید/تمدید اشتراک «پروفایل اختصاصی» */
+export function usePublicPagePlans() {
+  return useQuery({
+    queryKey: publicPageKeys.plans(),
+    queryFn: getPublicPagePlans,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

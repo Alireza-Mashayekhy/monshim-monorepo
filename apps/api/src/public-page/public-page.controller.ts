@@ -69,6 +69,19 @@ export class PublicPageController {
     return this.publicPageService.getStatusByUserId(req.user.id);
   }
 
+  /**
+   * پلن‌های قابل انتخاب برای خرید/تمدید پروفایل اختصاصی.
+   *
+   * قیمت‌ها از بک‌اند می‌آیند و فرانت فقط نمایش می‌دهد؛ مقدار نهایی پرداخت
+   * هم در بک‌اند از همین پلن محاسبه می‌شود.
+   */
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.Barber, Role.Admin)
+  @Get('plans')
+  getPublicPagePlans() {
+    return this.publicPageService.getPublicPagePlans();
+  }
+
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.Barber, Role.Admin)
   @Post('discount/quote')

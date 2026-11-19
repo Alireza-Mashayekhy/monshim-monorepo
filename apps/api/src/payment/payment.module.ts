@@ -11,6 +11,7 @@ import { Service } from 'src/services/entities/service.entity';
 import { SiteSettings } from 'src/settings/entities/setting.entity';
 import { SubscriptionPlan } from 'src/subscription/entities/subscription-plan.entity';
 import { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
+import { SubscriptionModule } from 'src/subscription/subscription.module';
 import { User } from 'src/users/entities/user.entity';
 import { BankCard } from 'src/wallet/entities/bank-card.entity';
 import { Transaction } from 'src/wallet/entities/transaction.entity';
@@ -44,6 +45,7 @@ import { PaymentService } from './payment.service';
     WalletModule,
     PublicPageModule,
     ReferralModule,
+    SubscriptionModule,
   ],
   controllers: [
     PaymentController,

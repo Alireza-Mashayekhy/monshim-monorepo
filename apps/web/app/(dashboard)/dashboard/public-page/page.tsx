@@ -16,7 +16,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import Link from 'next/link';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useState,useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 
 import DashboardShell from '@/components/dashboard/layout/dashboard-shell';
@@ -43,11 +43,46 @@ import { usePayPublicPage } from '@/services/features/payment/hooks';
 import {
   useCheckPublicPageSlug,
   useMyPublicPageStatus,
+  usePublicPagePlans,
   useQuotePublicPageDiscount,
   useUpdatePublicPageSlug,
 } from '@/services/features/public-page/hooks';
 
 const URL_HOST_PREFIX = `${siteConfig.url.replace(/^https?:\/\//, '')}/provider/`;
+
+const SUBSCRIPTION_TICK_MS = 60_000;
+let subscriptionNowTick = Math.floor(Date.now() / SUBSCRIPTION_TICK_MS);
+
+function subscribeSubscriptionNow(onChange: () => void) {
+  const id = setInterval(() => {
+    subscriptionNowTick = Math.floor(Date.now() / SUBSCRIPTION_TICK_MS);
+    onChange();
+  }, SUBSCRIPTION_TICK_MS);
+
+  return () => clearInterval(id);
+}
+
+function getSubscriptionNowSnapshot() {
+  return subscriptionNowTick;
+}
+
+function getSubscriptionNowServerSnapshot() {
+  return subscriptionNowTick;
+}
+
+/**
+ * «اکنون» برای محاسبهٔ اعتبار باقی‌ماندهٔ اشتراک.
+ *
+ * مثل `useNow` صفحهٔ اشتراک: `useSyncExternalStore` با یک تیک دقیقه‌ای تا
+ * رندر سمت سرور و کلاینت یکی بماند و مقدار فقط هر دقیقه به‌روز شود.
+ */
+function useSubscriptionNow() {
+  return useSyncExternalStore(
+    subscribeSubscriptionNow,
+    getSubscriptionNowSnapshot,
+    getSubscriptionNowServerSnapshot,
+  );
+}
 
 /**
  * صفحهٔ اختصاصی (عمومی) آرایشگاه در داشبورد.
@@ -68,12 +103,14 @@ export default function PublicPagePage() {
   const [discountCode, setDiscountCode] = useState('');
 
   const { data: statusData, isLoading } = useMyPublicPageStatus();
+  const { data: plansData, isLoading: isLoadingPlans } = usePublicPagePlans();
   const payPublicPage = usePayPublicPage();
   const quoteDiscount = useQuotePublicPageDiscount();
   const appliedDiscount = quoteDiscount.data?.data;
   const updateSlug = useUpdatePublicPageSlug();
 
   const status = statusData?.data;
+  const plans = plansData?.data ?? [];
   const isActive = Boolean(status?.isActive);
   const isPubliclyHidden = status?.isPubliclyVisible === false;
   const currentSlug = status?.slug ?? null;
@@ -84,6 +121,24 @@ export default function PublicPagePage() {
   const hasReferralDiscount = Boolean(status?.hasReferralDiscount);
   const referralDiscountAmount = Math.round(price / 2);
   const publicUrl = status?.publicUrl ?? '';
+  const subscription = status?.subscription ?? null;
+  const nowMs = useSubscriptionNow() * SUBSCRIPTION_TICK_MS;
+
+  const subscriptionRemainingDays = subscription
+    ? Math.max(
+        0,
+        Math.ceil(
+          (new Date(subscription.endDate).getTime() - nowMs) / 86_400_000,
+        ),
+      )
+    : 0;
+  /**
+   * پلن‌های تمدید فقط برای کاربرانی معنا دارد که صفحه‌شان را با خرید
+   * یک‌بارهٔ پکیج یا حد نصاب رزرو فعال نکرده باشند (آن‌ها اصلاً نیازی به
+   * تمدید ندارند).
+   */
+  const showRenewalPlans =
+    status?.reason !== 'PACKAGE' && status?.reason !== 'PAID_BOOKINGS';
 
   // اسلاگ فقط یک بار ثبت می‌شود: بعد از ثبت، فرم انتخاب اسلاگ دیگر نمایش داده
   // نمی‌شود و بک‌اند هم هر تلاش برای تغییر را رد می‌کند.
@@ -140,7 +195,11 @@ export default function PublicPagePage() {
       // لحظه‌ای که صفحه برای اولین بار واقعاً قابل مشاهده می‌شود = انتشار.
       trackEventOnce(`profile-published:${savedSlug}`, 'provider_profile_published', {
         activation:
-          status?.reason === 'PAID_BOOKINGS' ? 'paid_bookings' : 'package',
+          status?.reason === 'PAID_BOOKINGS'
+            ? 'paid_bookings'
+            : status?.reason === 'SUBSCRIPTION'
+              ? 'subscription'
+              : 'package',
       });
       void revalidateMyPublicBarberPage([currentSlug, savedSlug]);
       setSlugDraft('');
@@ -409,7 +468,131 @@ export default function PublicPagePage() {
                 خریداری شده و فعال است.
               </p>
             )}
+
+            {status?.reason === 'SUBSCRIPTION' && subscription && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                پروفایل اختصاصی شما با اشتراک «{subscription.planName}» فعال
+                است و تا{' '}
+                {toPersianDigits(
+                  new Date(subscription.endDate).toLocaleDateString('fa-IR'),
+                )}{' '}
+                ({toPersianDigits(subscriptionRemainingDays)} روز دیگر) اعتبار
+                دارد.
+              </p>
+            )}
           </AppCard>
+
+          {/* وضعیت اشتراک «پروفایل اختصاصی» (دورهٔ رایگان یا پلن تمدید پولی) */}
+          {subscription && (
+            <AppCard>
+              <div className="flex flex-wrap items-center gap-2">
+                <BadgeCheck size={20} className="text-primary" />
+                <h2 className="text-base font-black text-gray-900">
+                  اشتراک پروفایل اختصاصی
+                </h2>
+                {subscription.isFreeTrial ? (
+                  <Badge variant="secondary">دورهٔ رایگان</Badge>
+                ) : (
+                  <Badge variant="secondary">پلن پولی</Badge>
+                )}
+              </div>
+
+              <dl className="mt-4 space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">پلن</dt>
+                  <dd className="font-bold text-gray-900">
+                    {subscription.planName}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">تاریخ شروع</dt>
+                  <dd className="font-bold text-gray-900">
+                    {toPersianDigits(
+                      new Date(subscription.startDate).toLocaleDateString(
+                        'fa-IR',
+                      ),
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">تاریخ پایان</dt>
+                  <dd className="font-bold text-gray-900">
+                    {toPersianDigits(
+                      new Date(subscription.endDate).toLocaleDateString('fa-IR'),
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">اعتبار باقی‌مانده</dt>
+                  <dd className="font-bold text-gray-900">
+                    {toPersianDigits(subscriptionRemainingDays)} روز
+                  </dd>
+                </div>
+              </dl>
+
+              <p className="mt-3 rounded-2xl border border-primary/20 bg-primary-2/40 p-3 text-xs leading-6 text-muted-foreground">
+                در پایان این دوره، صفحهٔ اختصاصی شما غیرفعال می‌شود. با تمدید
+                اشتراک، مدت اعتبار به زمان باقی‌مانده اضافه می‌شود و چیزی از
+                دست نمی‌رود.
+              </p>
+            </AppCard>
+          )}
+
+          {/* پلن‌های تمدید اشتراک پروفایل اختصاصی */}
+          {showRenewalPlans && (
+            <AppCard>
+              <h2 className="text-base font-black text-gray-900">
+                تمدید اشتراک پروفایل اختصاصی
+              </h2>
+              <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                یکی از پلن‌های زیر را انتخاب کنید. قیمت‌ها به‌صورت قطعی از
+                سامانه دریافت می‌شوند و پس از پرداخت موفق، مدت اعتبار شما به
+                زمان باقی‌مانده اضافه می‌شود.
+              </p>
+
+              {isLoadingPlans ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Skeleton className="h-32" />
+                  <Skeleton className="h-32" />
+                </div>
+              ) : (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {plans.map(plan => (
+                    <div
+                      key={plan.id}
+                      className="flex flex-col rounded-2xl border border-gray-200 bg-gray-50/60 p-4"
+                    >
+                      <h3 className="text-sm font-black text-gray-900">
+                        {plan.name}
+                      </h3>
+                      <p className="mt-2 text-2xl font-black text-primary">
+                        {formatFaNumber(plan.price)}
+                        <span className="mr-1 text-xs font-medium text-muted-foreground">
+                          تومان
+                        </span>
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {toPersianDigits(plan.durationDays)} روز دسترسی
+                      </p>
+                      <Button
+                        size="sm"
+                        className="mt-4 w-full"
+                        disabled={payPublicPage.isPending}
+                        onClick={() =>
+                          payPublicPage.mutate({ planId: plan.id })
+                        }
+                      >
+                        {payPublicPage.isPending ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : null}
+                        انتخاب و پرداخت
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </AppCard>
+          )}
 
           {!isActive && (
             <AppCard className="bg-gradient-to-br from-primary to-primary/60 text-white">
@@ -522,11 +705,11 @@ export default function PublicPagePage() {
                     !appliedDiscount)
                 }
                 onClick={() =>
-                  payPublicPage.mutate(
-                    hasReferralDiscount
+                  payPublicPage.mutate({
+                    discountCode: hasReferralDiscount
                       ? undefined
                       : (appliedDiscount?.code ?? undefined),
-                  )
+                  })
                 }
               >
                 {payPublicPage.isPending ? (

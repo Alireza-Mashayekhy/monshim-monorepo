@@ -5,6 +5,7 @@ import { ApiSingleResponse } from '@/services/api/types';
 import {
   PublicPageDiscountQuote,
   PublicPageStatus,
+  PublicPageSubscriptionPlan,
   SlugAvailabilityResult,
 } from './types';
 
@@ -13,6 +14,17 @@ export async function getMyPublicPageStatus() {
   const { data } = await api.get<ApiSingleResponse<PublicPageStatus>>(
     endpoints.publicPage.me,
   );
+  return data;
+}
+
+/**
+ * پلن‌های قابل انتخاب برای خرید/تمدید اشتراک «پروفایل اختصاصی».
+ * قیمت‌ها از بک‌اند می‌آیند؛ فرانت فقط نمایش می‌دهد.
+ */
+export async function getPublicPagePlans() {
+  const { data } = await api.get<
+    ApiSingleResponse<PublicPageSubscriptionPlan[]>
+  >(endpoints.publicPage.plans);
   return data;
 }
 

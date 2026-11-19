@@ -1,3 +1,8 @@
+jest.mock('@nestjs/schedule', () => ({
+  Cron: () => () => undefined,
+  CronExpression: new Proxy({}, { get: () => '0 * * * *' }),
+}));
+
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -15,6 +20,7 @@ import { OtpService } from 'src/otp/otp.service';
 import { SessionRevocationService } from 'src/redis/session-revocation.service';
 import { ReferralService } from 'src/referral/referral.service';
 import { ServicesService } from 'src/services/services.service';
+import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
 import { UsersService } from 'src/users/users.service';
 import request from 'supertest';
@@ -213,6 +219,13 @@ describe('admin barber visibility and login over HTTP', () => {
         },
         { provide: ServicesService, useValue: {} },
         { provide: ReferralService, useValue: {} },
+        {
+          provide: UserSubscriptionService,
+          useValue: {
+            grantFreePublicPageTrial: jest.fn().mockResolvedValue(null),
+            claimFreeTrialSms: jest.fn().mockResolvedValue(false),
+          },
+        },
         { provide: DataSource, useValue: {} },
         { provide: FilesService, useValue: {} },
         { provide: WorkHoursService, useValue: {} },

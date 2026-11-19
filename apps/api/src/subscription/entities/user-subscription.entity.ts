@@ -71,6 +71,20 @@ export class UserSubscription {
   })
   endDate: Date;
 
+  /**
+   * زمان ارسال پیامک اطلاع‌رسانی دورهٔ رایگان پروفایل اختصاصی.
+   *
+   * فقط برای پلن `public_page_trial` معنا دارد و کلید idempotency پیامک است:
+   * ارسال دوبارهٔ پیامک برای همان اشتراک فقط در صورتی ممکن است که این فیلد
+   * خالی باشد. `NULL` یعنی هنوز پیامکی ارسال نشده است.
+   */
+  @Column({
+    name: 'free_trial_sms_sent_at',
+    type: 'datetime',
+    nullable: true,
+  })
+  freeTrialSmsSentAt: Date | null;
+
   @CreateDateColumn({
     name: 'created_at',
   })

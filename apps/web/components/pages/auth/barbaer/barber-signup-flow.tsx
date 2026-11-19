@@ -18,6 +18,7 @@ import BarbaerStep4 from '@/components/pages/auth/barbaer/step-4';
 import BarbaerStep5 from '@/components/pages/auth/barbaer/step-5';
 import { buildAuthHref, CallbackUrlValue } from '@/lib/auth';
 import { toEnglishDigits } from '@/lib/digits';
+import { usePublicSettings } from '@/services/features/settings/hooks';
 import { useBarberSignupStore } from '@/store/useBarberSignupStore';
 
 const STEP_META = [
@@ -60,15 +61,21 @@ export default function BarberSignupFlow({
 }) {
   const router = useRouter();
   const { step, updateData, nextStep, prevStep } = useBarberSignupStore();
+  const { data: publicSettings } = usePublicSettings();
+  const isReferralEnabled = Boolean(publicSettings?.referralEnabled);
 
   useEffect(() => {
+    // سیستم کد معرف غیرفعال است: کد دریافتی از لینک دعوت هم نباید ثبت شود
+    // (بک‌اند آن را نمی‌پذیرد و ثبت‌نام با خطا مواجه می‌شود).
+    if (!isReferralEnabled) return;
+
     const normalizedReferralCode = toEnglishDigits(
       referralCode?.trim() ?? '',
     ).toUpperCase();
     if (normalizedReferralCode) {
       updateData({ referralCode: normalizedReferralCode });
     }
-  }, [referralCode, updateData]);
+  }, [referralCode, updateData, isReferralEnabled]);
 
   const meta = STEP_META[Math.min(step, STEP_META.length) - 1] ?? STEP_META[0];
 

@@ -5,6 +5,7 @@ import { BarberProfile } from 'src/barber/entities/barber.entity';
 import { Booking } from 'src/booking/entities/booking.entity';
 import { Payment } from 'src/payment/entities/payment.entity';
 import { Referral } from 'src/referral/entities/referral.entity';
+import { SubscriptionModule } from 'src/subscription/subscription.module';
 
 import { BarberPublicPagePurchase } from './entities/barber-public-page-purchase.entity';
 import { PublicPageDiscount } from './entities/public-page-discount.entity';
@@ -25,6 +26,8 @@ import { PublicPageSchemaService } from './public-page-schema.service';
     ]),
     // `BarberService` برای خواندن پروفایل عمومی و فهرست آرایشگرهای واجد شرایط
     BarberModule,
+    // `UserSubscriptionService` برای تشخیص اشتراک فعال «پروفایل اختصاصی»
+    SubscriptionModule,
   ],
   controllers: [PublicPageController, PublicPageDiscountAdminController],
   providers: [PublicPageService, PublicPageSchemaService],

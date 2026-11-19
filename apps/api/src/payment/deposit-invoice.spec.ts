@@ -241,6 +241,8 @@ describe('PaymentService deposit invoice & gateway payment flow', () => {
       {} as any,
       bookingSmsService,
       {} as any,
+      {} as any,
+      {} as any,
       {
         // قرارداد فعلی: ارزیابی دعوتِ آرایشگرِ **دعوت‌شده** (همان کسی که
         // رزرو/خرید انجام داده)، نه دعوت‌کننده.

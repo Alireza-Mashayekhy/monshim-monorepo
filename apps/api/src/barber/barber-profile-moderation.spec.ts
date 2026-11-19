@@ -266,7 +266,10 @@ describe('Barber profile approval SMS (172833) & non-disruptive profile editing'
     const smsIrService = {
       sendTemplate: jest.fn().mockResolvedValue({ status: 1 }),
     };
-    const bookingSmsService = new BookingSmsService(smsIrService as any);
+    const bookingSmsService = new BookingSmsService(
+      smsIrService as any,
+      {} as any,
+    );
 
     const filesService = {
       saveFile: jest.fn((_file: any, folder: string) =>

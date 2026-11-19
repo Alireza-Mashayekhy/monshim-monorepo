@@ -97,4 +97,18 @@ UNION ALL
 SELECT 'site_settings (table)',
        IF(COUNT(*) > 0, 'OK', 'MISSING')
 FROM INFORMATION_SCHEMA.TABLES
-WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'site_settings';
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'site_settings'
+
+UNION ALL
+SELECT 'subscription_plans.plan_type (پروفایل اختصاصی)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'subscription_plans'
+  AND COLUMN_NAME = 'plan_type'
+
+UNION ALL
+SELECT 'user_subscriptions.free_trial_sms_sent_at (idempotency پیامک دورهٔ رایگان)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subscriptions'
+  AND COLUMN_NAME = 'free_trial_sms_sent_at';

@@ -19,11 +19,24 @@ export async function paySubscription(dto: InitiateSubscriptionPaymentDto) {
   return data;
 }
 
-// درخواست خرید پکیج «صفحهٔ عمومی آرایشگاه» با درگاه زیبال
-export async function payPublicPage(discountCode?: string) {
+/**
+ * درخواست خرید/تمدید «صفحهٔ عمومی آرایشگاه» با درگاه زیبال.
+ *
+ *   • `planId`       — شناسهٔ پلن اشتراک «پروفایل اختصاصی» (تمدید)؛
+ *   • `discountCode` — کد تخفیف پکیج یک‌بارهٔ ۷۷۳ هزار تومانی.
+ *
+ * قیمت نهایی همیشه در بک‌اند از روی پلن محاسبه می‌شود.
+ */
+export async function payPublicPage(options: {
+  planId?: string;
+  discountCode?: string;
+} = {}) {
   const { data } = await api.post<ApiSingleResponse<InitiatePaymentResponse>>(
     endpoints.payment.publicPage,
-    discountCode ? { discountCode } : {},
+    {
+      ...(options.planId ? { planId: options.planId } : {}),
+      ...(options.discountCode ? { discountCode: options.discountCode } : {}),
+    },
   );
   return data;
 }

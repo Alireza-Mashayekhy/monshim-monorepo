@@ -20,6 +20,7 @@ import {
   getRefreshTokenSecret,
   REFRESH_TOKEN_EXPIRES_IN,
 } from 'src/common/config/jwt.config';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { Role } from 'src/common/enum/role.enum';
 import {
   clearAuthCookies,
@@ -40,6 +41,7 @@ import {
 } from 'src/redis/session-revocation.service';
 import { ReferralService } from 'src/referral/referral.service';
 import { ServicesService } from 'src/services/services.service';
+import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { CreateUserDto } from 'src/users/dto/create-user.dto';
 import { User } from 'src/users/entities/user.entity';
 import { UsersService } from 'src/users/users.service';
@@ -68,6 +70,7 @@ export class AuthService {
     private readonly barberProfileService: BarberService,
     private readonly servicesService: ServicesService,
     private readonly referralService: ReferralService,
+    private readonly userSubscriptionService: UserSubscriptionService,
     private readonly dataSource: DataSource,
     private readonly sessionRevocations: SessionRevocationService,
     @Optional()
@@ -215,6 +218,15 @@ export class AuthService {
 
     let referredByUserId: number | null = null;
     if (dto.referralCode?.trim()) {
+      /**
+       * سیستم کد معرف به‌صورت موقت غیرفعال است. مسیر پذیرش «کد معرف جدید»
+       * از همین‌جا بسته می‌شود تا نه رکورد دعوت جدیدی ساخته شود و نه پاداش
+       * ۳۰۰ هزار تومانی ایجاد می‌گردد. سوابق قبلی دست‌نخورده باقی می‌مانند.
+       */
+      if (!isRuntimeFlagEnabled('ENABLE_REFERRAL', false)) {
+        throw new BadRequestException('سیستم کد معرف در حال حاضر فعال نیست');
+      }
+
       const referrerProfile =
         await this.barberProfileService.findByReferralCode(
           toEnglishDigits(dto.referralCode.trim()).toUpperCase(),
@@ -231,66 +243,97 @@ export class AuthService {
     await this.otpService.verifyOtp(dto.phone, dto.code);
 
     // ۴. ایجاد کاربر، پروفایل، خدمات و رکورد دعوت به صورت تراکنشی
+    type FreeTrialResult = {
+      subscription: { id: string };
+      created: boolean;
+    } | null;
+
     let user: User;
+    let freeTrial: FreeTrialResult = null;
+
     try {
-      user = await this.dataSource.transaction(async manager => {
-        const createdUser = await this.usersService.createWithRoles(
-          {
-            fullName: dto.fullName,
-            phone: dto.phone,
-            nationalCode: dto.nationalCode
-              ? normalizeNationalCode(dto.nationalCode)
-              : null,
-            isActive: true,
-            birthDate: dto.birthDate,
-          },
-          [Role.User, Role.Barber],
-          manager,
-        );
+      ({ user, freeTrial } = await this.dataSource.transaction(
+        async manager => {
+          const createdUser = await this.usersService.createWithRoles(
+            {
+              fullName: dto.fullName,
+              phone: dto.phone,
+              nationalCode: dto.nationalCode
+                ? normalizeNationalCode(dto.nationalCode)
+                : null,
+              isActive: true,
+              birthDate: dto.birthDate,
+            },
+            [Role.User, Role.Barber],
+            manager,
+          );
 
-        await this.barberProfileService.create(
-          {
-            userId: createdUser.id,
-            salonName: dto.salonName,
-            activityType: dto.activityType,
-            provinceId: dto.provinceId,
-            cityId: dto.cityId,
-            address: dto.address,
-            profileImage: dto.profileImage,
-            portfolioImages: dto.portfolioImages || [],
-            isApproved: false,
-            bio: '',
-            referredBy: referredByUserId ?? undefined,
-          },
-          manager,
-        );
+          await this.barberProfileService.create(
+            {
+              userId: createdUser.id,
+              salonName: dto.salonName,
+              activityType: dto.activityType,
+              provinceId: dto.provinceId,
+              cityId: dto.cityId,
+              address: dto.address,
+              profileImage: dto.profileImage,
+              portfolioImages: dto.portfolioImages || [],
+              isApproved: false,
+              bio: '',
+              referredBy: referredByUserId ?? undefined,
+            },
+            manager,
+          );
 
-        if (dto.services && dto.services.length > 0) {
-          for (const svc of dto.services) {
-            await this.servicesService.create(
-              {
-                name: svc.name,
-                price: svc.price,
-                depositPrice: svc.depositPrice,
-                durationMinutes: svc.durationMinutes,
-                barberId: createdUser.id,
-                isActive: true,
-              },
+          if (dto.services && dto.services.length > 0) {
+            for (const svc of dto.services) {
+              await this.servicesService.create(
+                {
+                  name: svc.name,
+                  price: svc.price,
+                  depositPrice: svc.depositPrice,
+                  durationMinutes: svc.durationMinutes,
+                  barberId: createdUser.id,
+                  isActive: true,
+                },
+                manager,
+              );
+            }
+          }
+
+          if (referredByUserId) {
+            await this.referralService.createReferral(
+              referredByUserId,
+              createdUser.id,
               manager,
             );
           }
-        }
 
-        if (referredByUserId) {
-          await this.referralService.createReferral(
-            referredByUserId,
-            createdUser.id,
-            manager,
-          );
-        }
+          /**
+           * ۴.۱. اعطای خودکار دورهٔ رایگان یک‌ماههٔ پروفایل اختصاصی.
+           *
+           * داخل همان تراکنش ثبت‌نام است تا یا همه‌چیز (کاربر، پروفایل و
+           * اشتراک رایگان) ساخته شود یا هیچ‌کدام؛ نیازی به پرداخت یا اقدام
+           * ادمین ندارد. برای کاربرانی که قبل از این تغییر ثبت‌نام کرده‌اند
+           * چیزی اجرا نمی‌شود.
+           */
+          const grantedTrial =
+            await this.userSubscriptionService.grantFreePublicPageTrial(
+              createdUser.id,
+              manager,
+            );
 
-        return createdUser;
-      });
+          return {
+            user: createdUser,
+            freeTrial: grantedTrial
+              ? {
+                  subscription: { id: grantedTrial.subscription.id },
+                  created: grantedTrial.created,
+                }
+              : null,
+          };
+        },
+      ));
     } catch (error) {
       if (isDuplicateEntryError(error)) {
         throw new ConflictException(PHONE_ALREADY_REGISTERED_MESSAGE);
@@ -329,6 +372,14 @@ export class AuthService {
     // بخورد) و خطای آن هم فقط لاگ می‌شود تا ثبت‌نام هرگز به‌خاطر پیامک
     // شکست نخورد یا unhandled rejection ایجاد نکند.
     this.sendProfileSubmittedSms(user);
+
+    // ۵.۳. پیامک اطلاع‌رسانی فعال‌شدن دورهٔ رایگان پروفایل اختصاصی.
+    // هم مثل بالا fire-and-forget است: خطای پیامک نه ثبت‌نام را می‌شکند و
+    // نه فعال‌سازی اشتراک را. فقط در صورت اعطای *تازه* دورهٔ رایگان ارسال
+    // می‌شود و با `claimFreeTrialSms` از تکرار آن جلوگیری می‌کند.
+    if (freeTrial?.created) {
+      this.sendPublicPageFreeTrialSms(user, freeTrial.subscription);
+    }
 
     // ۶. صدور توکن
     await this.issueTokens(user, response);
@@ -515,6 +566,32 @@ export class AuthService {
         `ارسال پیامک «پروفایل در حال بررسی» برای کاربر ${user.id} ناموفق بود: ${String(error)}`,
       );
     });
+  }
+
+  /**
+   * پیامک «پروفایل اختصاصی شما به مدت یک ماه رایگان فعال شد» — fire-and-forget.
+   *
+   * `claimFreeTrialSms` یک claim اتمیک انجام می‌دهد: اگر همین اشتراک قبلاً
+   * پیامک داشته باشد، `false` برمی‌گردد و هیچ پیامکی ارسال نمی‌شود. بنابراین
+   * حتی با تلاش مجدد ثبت‌نام/ارسال، پیامک تکراری نمی‌رود. خطای سرویس پیامک
+   * فقط لاگ می‌شود.
+   */
+  private sendPublicPageFreeTrialSms(user: User, subscription: { id: string }) {
+    void Promise.resolve(
+      this.userSubscriptionService.claimFreeTrialSms(subscription.id),
+    )
+      .then(claimed => {
+        if (!claimed) return;
+
+        return this.bookingSmsService?.sendPublicPageFreeTrialToBarber?.(
+          user.phone,
+        );
+      })
+      .catch(error => {
+        this.logger.warn(
+          `ارسال پیامک «فعال‌شدن دورهٔ رایگان پروفایل اختصاصی» برای کاربر ${user.id} ناموفق بود: ${String(error)}`,
+        );
+      });
   }
 
   private async issueTokens(

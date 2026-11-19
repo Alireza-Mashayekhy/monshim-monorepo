@@ -150,6 +150,7 @@ export const endpoints = {
     barber: (identifier: number | string) =>
       `/public-page/barber/${encodeURIComponent(String(identifier))}`,
     me: '/public-page/me',
+    plans: '/public-page/plans',
     checkSlug: '/public-page/slug/check',
     updateSlug: '/public-page/me/slug',
     discountQuote: '/public-page/discount/quote',

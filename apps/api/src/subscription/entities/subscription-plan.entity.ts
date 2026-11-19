@@ -6,6 +6,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import type { SubscriptionPlanType } from '../constants';
+
 @Entity('subscription_plans')
 export class SubscriptionPlan {
   @PrimaryGeneratedColumn('uuid')
@@ -54,6 +56,19 @@ export class SubscriptionPlan {
     default: true,
   })
   isActive: boolean;
+
+  /**
+   * نوع پلن: اشتراک پیامکی (`sms`) یا اشتراک پروفایل اختصاصی
+   * (`public_page`). پیش‌فرض `sms` است تا پلن‌های موجود بدون تغییر
+   * رفتار قبلی خود را حفظ کنند.
+   */
+  @Column({
+    name: 'plan_type',
+    type: 'varchar',
+    length: 20,
+    default: 'sms',
+  })
+  planType: SubscriptionPlanType;
 
   @Column({
     default: 0,

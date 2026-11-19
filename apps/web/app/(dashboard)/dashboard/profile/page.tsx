@@ -55,6 +55,7 @@ import {
   useMyReferrals,
   useUploadProfileImage,
 } from '@/services/features/barber/hooks';
+import { usePublicSettings } from '@/services/features/settings/hooks';
 
 const schema = z.object({
   fullName: z.string().min(1, 'نام و نام خانوادگی الزامی است'),
@@ -72,14 +73,16 @@ type FormData = z.infer<typeof schema>;
 export default function ProfilePage() {
   const { data: profile, isLoading, error } = useMyBarberProfile();
   const uploadImageMutation = useUploadProfileImage();
-  const { data: referralData } = useMyReferralCode();
+  const { data: publicSettings } = usePublicSettings();
+  const isReferralEnabled = Boolean(publicSettings?.referralEnabled);
+  const { data: referralData } = useMyReferralCode(isReferralEnabled);
 
   const {
     data: referralsData,
     isLoading: referralsLoading,
     isError: referralsError,
     refetch: retryReferralQuery,
-  } = useMyReferrals();
+  } = useMyReferrals(isReferralEnabled);
 
   const referralCode = referralData?.data?.referralCode;
   const referralLink = referralCode
@@ -478,6 +481,8 @@ export default function ProfilePage() {
               تغییر رمز عبور
             </Button>
           </AppCard>
+          {/* قسمت دعوت فقط وقتی نمایش داده می‌شود که سیستم کد معرف فعال باشد */}
+          {isReferralEnabled && (
           <AppCard>
             <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
               <Share2 size={18} className="text-primary-600" />
@@ -711,7 +716,8 @@ export default function ProfilePage() {
                 </p>
               )}
             </div>
-          </AppCard>{' '}
+          </AppCard>
+          )}
         </div>
       </FadeIn>
 

@@ -7,6 +7,7 @@ import { NotificationModule } from 'src/notification/notification.module';
 import { OtpModule } from 'src/otp/otp.module';
 import { ReferralModule } from 'src/referral/referral.module';
 import { ServicesModule } from 'src/services/services.module';
+import { SubscriptionModule } from 'src/subscription/subscription.module';
 import { UsersModule } from 'src/users/users.module';
 
 import { AuthController } from './auth.controller';
@@ -20,6 +21,7 @@ import { AuthService } from './auth.service';
     ServicesModule,
     FilesModule,
     ReferralModule,
+    SubscriptionModule,
     NotificationModule,
     JwtModule.registerAsync({
       global: true,

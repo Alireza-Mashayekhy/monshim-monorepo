@@ -1,7 +1,46 @@
 import type { Barber } from '@/services/features/barber/types';
 
-/** دلیل فعال‌بودن صفحهٔ عمومی: خرید پکیج یا رسیدن به حد نصاب رزروهای موفق */
-export type PublicPageActivationReason = 'PACKAGE' | 'PAID_BOOKINGS';
+/**
+ * دلیل فعال‌بودن صفحهٔ عمومی:
+ *   • `PACKAGE`      — خرید یک‌بارهٔ پکیج (مسیر قبلی)؛
+ *   • `PAID_BOOKINGS`— رسیدن به حد نصاب رزروهای موفقِ پرداخت‌شده؛
+ *   • `SUBSCRIPTION` — اشتراک فعال «پروفایل اختصاصی» (دورهٔ رایگان یا پلن
+ *                      تمدید پولی).
+ */
+export type PublicPageActivationReason =
+  | 'PACKAGE'
+  | 'PAID_BOOKINGS'
+  | 'SUBSCRIPTION';
+
+/** پلن اشتراک «پروفایل اختصاصی» قابل خرید/تمدید */
+export interface PublicPageSubscriptionPlan {
+  id: string;
+  planKey: string | null;
+  name: string;
+  smsCount: number;
+  price: number;
+  durationDays: number;
+  description: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  planType: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** اشتراک فعال «پروفایل اختصاصی» کاربر */
+export interface PublicPageSubscriptionStatus {
+  id: string;
+  planId: string;
+  planKey: string | null;
+  planName: string;
+  /** آیا این اشتراک، دورهٔ رایگان پس از ثبت‌نام است؟ */
+  isFreeTrial: boolean;
+  price: number;
+  startDate: string;
+  endDate: string;
+  status: string;
+}
 
 export interface PublicPageStatus {
   isActive: boolean;
@@ -29,6 +68,11 @@ export interface PublicPageStatus {
   isPubliclyVisible?: boolean;
   /** فقط آرایشگرانی که با کد معرف ثبت‌نام کرده‌اند تخفیف ویژهٔ خرید دارند. */
   hasReferralDiscount: boolean;
+  /**
+   * اشتراک فعال «پروفایل اختصاصی» (دورهٔ رایگان یا پلن تمدید پولی).
+   * `null` یعنی صفحه با خرید یک‌باره یا حد نصاب رزرو فعال است.
+   */
+  subscription?: PublicPageSubscriptionStatus | null;
 }
 
 export interface PublicPageDiscountQuote {

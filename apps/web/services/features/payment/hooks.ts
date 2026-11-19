@@ -36,7 +36,8 @@ export const usePaySubscription = () => {
 export const usePayPublicPage = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (discountCode?: string) => payPublicPage(discountCode),
+    mutationFn: (options?: { planId?: string; discountCode?: string }) =>
+      payPublicPage(options),
     onSuccess: response => {
       const result = response.data;
       const paymentUrl = result?.paymentUrl;

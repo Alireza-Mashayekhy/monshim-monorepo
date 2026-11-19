@@ -23,5 +23,12 @@ export const REFERRAL_PUBLIC_PAGE_DISCOUNT_PERCENT = 50;
 /** تعداد رزروهای موفقِ پرداخت‌شده در درگاه که صفحهٔ عمومی را رایگان فعال می‌کند */
 export const PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS = 300;
 
-/** دلیل فعال‌بودن صفحهٔ عمومی */
-export type PublicPageActivationReason = 'PACKAGE' | 'PAID_BOOKINGS';
+/**
+ * دلیل فعال‌بودن صفحهٔ عمومی:
+ *   • `PACKAGE`      — خرید یک‌بارهٔ پکیج (سوابق قبلی، برای همیشه فعال)؛
+ *   • `PAID_BOOKINGS`— رسیدن به حد نصاب رزروهای موفقِ پرداخت‌شده (برای همیشه)؛
+ *   • `SUBSCRIPTION` — اشتراک فعال «پروفایل اختصاصی» (دورهٔ رایگان یا پلن
+ *                      تمدید پولی) که تا پایان مدت اعتبار فعال است.
+ */
+export type PublicPageActivationReason =
+  'PACKAGE' | 'PAID_BOOKINGS' | 'SUBSCRIPTION';

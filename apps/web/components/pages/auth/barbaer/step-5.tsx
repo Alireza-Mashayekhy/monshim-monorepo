@@ -39,6 +39,7 @@ import { isValidPhone, normalizePhone, onlyDigits } from '@/lib/phone';
 import { onSignupPersistFailure } from '@/lib/signup-draft-storage';
 import { formatPrice } from '@/lib/utils';
 import { useRegisterBarber, useSendOtp } from '@/services/features/auth/hooks';
+import { usePublicSettings } from '@/services/features/settings/hooks';
 import { useAuthStore } from '@/store/auth.store';
 import { useBarberSignupStore } from '@/store/useBarberSignupStore';
 
@@ -110,6 +111,8 @@ export default function BarbaerStep5({
 
   const registerMutation = useRegisterBarber();
   const sendOtpMutation = useSendOtp();
+  const { data: publicSettings } = usePublicSettings();
+  const isReferralEnabled = Boolean(publicSettings?.referralEnabled);
 
   /**
    * شنوندهٔ خطای ذخیرهٔ پیش‌نویس.
@@ -550,8 +553,9 @@ export default function BarbaerStep5({
         </div>
       </div>
 
-      {/* کد معرف (اختیاری) */}
-      <div className="bg-gray-50/70 p-4 rounded-2xl border border-gray-200">
+      {/* کد معرف فقط وقتی نمایش داده می‌شود که سیستم دعوت در بک‌اند فعال باشد */}
+      {isReferralEnabled && (
+        <div className="bg-gray-50/70 p-4 rounded-2xl border border-gray-200">
         <div className="flex items-center gap-2 text-gray-700 mb-2">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -589,7 +593,8 @@ export default function BarbaerStep5({
           }
           maxLength={8}
         />
-      </div>
+        </div>
+      )}
 
       <StepFooter
         onBack={store.prevStep}
