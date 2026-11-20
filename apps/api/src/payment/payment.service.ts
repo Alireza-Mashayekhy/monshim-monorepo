@@ -23,7 +23,6 @@ import {
   resolvePublicOrigin,
 } from 'src/common/utils/public-url.util';
 import { BookingSmsService } from 'src/notification/booking-sms.service';
-import { PUBLIC_PAGE_PACKAGE_PRICE_TOMANS } from 'src/public-page/constants';
 import { PublicPageService } from 'src/public-page/public-page.service';
 import { ReferralService } from 'src/referral/referral.service';
 import { Service } from 'src/services/entities/service.entity';
@@ -434,21 +433,20 @@ export class PaymentService {
   }
 
   // =========================================================
-  // ۱.۱. خرید پکیج «صفحهٔ عمومی آرایشگاه» (PUBLIC_PAGE)
+  // ۱.۱. خرید/تمدید اشتراک «پروفایل اختصاصی» (PUBLIC_PAGE)
   // =========================================================
   /**
-   * پرداخت «پروفایل اختصاصی» — دو مسیر:
-   *   ۱. خرید پکیج یک‌باره (سوابق قبلی): اگر صفحه از قبل با خرید یا
-   *       حد نصاب نوبت‌های پرداخت‌شده فعال شده باشد، پرداخت دوباره پذیرفته
-   *       نمی‌شود.
-   *   ۲. خرید/تمدید پلن اشتراک: `planId` یکی از پلن‌های فعالِ
-   *       `public_page` است و قیمت آن **فقط** از پلن خوانده می‌شود؛
-   *       صفحه می‌تواند در لحظهٔ خرید با اشتراکِ فعال (رایگان یا پولی)
-   *       فعال باشد و مدت اشتراک به زمان باقی‌مانده اضافه می‌شود.
+   * پرداخت اشتراک «پروفایل اختصاصی».
+   *
+   * تنها مسیر فعال‌سازی صفحه، اشتراک است. `planId` اجباری و باید یکی از
+   * پلن‌های فعالِ `public_page` باشد؛ قیمت **فقط** از خود پلن خوانده می‌شود
+   * و فرانت هیچ قیمت/تخفیفی نمی‌فرستد.
+   *
+   * اگر صفحه از قبل با اشتراک فعال باشد، این درخواست همان تمدید است و مدت
+   * اعتبار به زمان باقی‌مانده اضافه می‌شود.
    */
   async initiatePublicPagePayment(
     userId: number,
-    discountCode?: string,
     requestOrigin?: string | null,
     planId?: string,
   ) {
@@ -464,97 +462,39 @@ export class PaymentService {
       throw new NotFoundException('پروفایل آرایشگر یافت نشد');
     }
 
-    const status = await this.publicPageService.getStatusByUserId(userId);
-
-    const subscriptionPlan = planId
-      ? await this.subscriptionService.findPublicPagePurchasePlan(planId)
-      : null;
-
-    // اگر فرانت شناسهٔ پلن فرستاده اما پلن معتبری نیست، درخواست رد می‌شود
-    // تا به‌جای پلن اشتراک، قیمت پکیج یک‌باره استفاده نشود.
-    if (planId && !subscriptionPlan) {
+    if (!planId) {
       throw new BadRequestException('پلن اشتراک انتخاب‌شده معتبر نیست');
     }
 
-    if (subscriptionPlan) {
-      /**
-       * مسیر اشتراک: فقط وقتی مجاز است که صفحه فعال نباشد یا دلیل
-       * فعالیتش همان اشتراک باشد (تا بتوان آن را تمدید کرد).
-       */
-      if (status.isActive && status.reason !== 'SUBSCRIPTION') {
-        throw new BadRequestException(
-          'صفحهٔ اختصاصی شما از قبل فعال است و نیازی به خرید دوباره نیست',
-        );
-      }
-    } else if (status.isActive) {
-      throw new BadRequestException(
-        'صفحهٔ اختصاصی شما از قبل فعال است و نیازی به خرید دوباره نیست',
-      );
+    const subscriptionPlan =
+      await this.subscriptionService.findPublicPagePurchasePlan(planId);
+
+    if (!subscriptionPlan) {
+      throw new BadRequestException('پلن اشتراک انتخاب‌شده معتبر نیست');
     }
 
-    /**
-     * قیمت پلن اشتراک از خود پلن می‌آید؛ فرانت هیچ قیمتی نمی‌فرستد.
-     * کد تخفیف روی پلن اعمال می‌شود که (برخلاف تخفیف ۵۰٪ی معرفی) همچنان
-     * پشتیبانی می‌شود.
-     */
-    const planQuote = subscriptionPlan
-      ? {
-          code: null as string | null,
-          percentOff: 0,
-          originalAmount: Number(subscriptionPlan.price),
-          discountAmount: 0,
-          amount: Number(subscriptionPlan.price),
-        }
-      : null;
-
-    // تخفیف دعوت خودکار است و فقط برای ثبت‌نام‌هایی اعمال می‌شود که رکورد
-    // referral دارند؛ این پیشنهاد با کد تخفیف دیگری جمع نمی‌شود.
-    // (در حالت پیش‌فرض این تخفیف ۵۰٪ی غیرفعال است؛ رکوردهای قبلی دست‌نخورده.)
-    const referralQuote =
-      await this.publicPageService.getReferralDiscountQuote(userId);
-    const quote =
-      planQuote ??
-      referralQuote ??
-      (discountCode
-        ? await this.publicPageService.getDiscountQuote(discountCode)
-        : {
-            code: null,
-            percentOff: 0,
-            originalAmount: PUBLIC_PAGE_PACKAGE_PRICE_TOMANS,
-            discountAmount: 0,
-            amount: PUBLIC_PAGE_PACKAGE_PRICE_TOMANS,
-          });
+    const quote = {
+      code: null as string | null,
+      percentOff: 0,
+      originalAmount: Number(subscriptionPlan.price),
+      discountAmount: 0,
+      amount: Number(subscriptionPlan.price),
+    };
 
     const orderId = `PAGE-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const discountDescription = quote.percentOff
-      ? quote.code
-        ? ` (کد ${quote.code}، تخفیف ${quote.percentOff}٪)`
-        : ` (تخفیف ویژهٔ معرفی، ${quote.percentOff}٪)`
-      : '';
-    const discountMetadata = quote.percentOff
-      ? JSON.stringify({
-          ...(quote.code
-            ? { discountCode: quote.code }
-            : { referralDiscount: true }),
-          discountPercent: quote.percentOff,
-          originalAmount: quote.originalAmount,
-          discountAmount: quote.discountAmount,
-        })
-      : null;
+    const description = `خرید اشتراک پروفایل اختصاصی آرایشگاه (${profile.salonName})`;
 
     /**
-     * پرداخت رایگان: هم با کد تخفیفِ ۱۰۰٪ پکیج (منطق قبلی) و هم برای
-     * پلن اشتراکِ قیمت‌صفر (اگر در آینده اضافه شود) می‌تواند رخ دهد.
+     * پرداخت رایگان: اگر پلن قیمتی نداشته باشد (پیش‌فرض وجود ندارد) همان
+     * مسیر فعال‌سازی اشتراک را می‌گیریم تا نیازی به درگاه نباشد.
      */
-    if (quote.amount === 0 && (quote.code || planQuote)) {
-      const metadata = {
-        ...(discountMetadata ? JSON.parse(discountMetadata) : {}),
-        ...(subscriptionPlan
-          ? { subscriptionPlanId: subscriptionPlan.id }
-          : {}),
-      };
+    if (quote.amount === 0) {
+      await this.userSubscriptionService.activateSubscriptionAfterPayment(
+        userId,
+        subscriptionPlan.id,
+      );
 
-      const complimentaryPayment = await this.paymentRepo.save(
+      await this.paymentRepo.save(
         this.paymentRepo.create({
           userId,
           amount: 0,
@@ -563,36 +503,18 @@ export class PaymentService {
           purpose: PaymentPurpose.PUBLIC_PAGE,
           purposeId: profile.id,
           status: PaymentStatus.PAID,
-          description: `خرید رایگان صفحهٔ اختصاصی آرایشگاه (${profile.salonName})${discountDescription}`,
-          metadata:
-            Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null,
+          description,
+          metadata: JSON.stringify({ subscriptionPlanId: subscriptionPlan.id }),
           paidAt: new Date(),
         }),
       );
-      if (planQuote && subscriptionPlan) {
-        // پلن اشتراک رایگان (پیش‌فرض وجود ندارد) — همان مسیر فعال‌سازی اشتراک.
-        await this.userSubscriptionService.activateSubscriptionAfterPayment(
-          userId,
-          subscriptionPlan.id,
-        );
-        return {
-          free: true,
-          amount: 0,
-          orderId,
-          discountCode: quote.code,
-          planId: subscriptionPlan.id,
-        };
-      }
 
-      await this.publicPageService.activateAfterPayment(complimentaryPayment);
-
-      // خرید صفحه توسط دعوت‌شده: دعوت او ارزیابی می‌شود تا پاداش به معرف برسد.
-      await this.referralService.onReferredPublicPagePurchased(userId);
       return {
         free: true,
         amount: 0,
         orderId,
-        discountCode: quote.code,
+        discountCode: null,
+        planId: subscriptionPlan.id,
       };
     }
 
@@ -602,15 +524,10 @@ export class PaymentService {
     const { trackId, paymentUrl } = await this.requestZibalPayment({
       amountTomans: quote.amount,
       callbackUrl,
-      description: `خرید صفحهٔ اختصاصی آرایشگاه - ${profile.salonName}${discountDescription}`,
+      description,
       orderId,
       mobile: user.phone,
     });
-
-    const metadata = {
-      ...(discountMetadata ? JSON.parse(discountMetadata) : {}),
-      ...(subscriptionPlan ? { subscriptionPlanId: subscriptionPlan.id } : {}),
-    };
 
     const payment = this.paymentRepo.create({
       userId,
@@ -620,9 +537,8 @@ export class PaymentService {
       purpose: PaymentPurpose.PUBLIC_PAGE,
       purposeId: profile.id,
       status: PaymentStatus.PENDING,
-      description: `خرید صفحهٔ اختصاصی آرایشگاه (${profile.salonName})${discountDescription}`,
-      metadata:
-        Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null,
+      description,
+      metadata: JSON.stringify({ subscriptionPlanId: subscriptionPlan.id }),
     });
 
     await this.paymentRepo.save(payment);
@@ -633,10 +549,10 @@ export class PaymentService {
       orderId,
       amount: quote.amount,
       originalAmount: quote.originalAmount,
-      discountAmount: quote.discountAmount,
-      discountPercent: quote.percentOff,
-      discountCode: quote.code,
-      ...(planQuote && subscriptionPlan ? { planId: subscriptionPlan.id } : {}),
+      discountAmount: 0,
+      discountPercent: 0,
+      discountCode: null,
+      planId: subscriptionPlan.id,
     };
   }
 
@@ -1715,11 +1631,6 @@ export class PaymentService {
     }
 
     if (payment.purpose === PaymentPurpose.PUBLIC_PAGE) {
-      /**
-       * اگر این پرداخت مربوط به پلن اشتراک «پروفایل اختصاصی» باشد
-       * (planId در metadata)، مسیر اشتراک را می‌گیریم؛ در غیر این صورت
-       * همان رفتار قبلی خرید یک‌بارهٔ پکیج پروفایل است.
-       */
       const subscriptionPlanId = this.extractSubscriptionPlanId(payment);
 
       if (subscriptionPlanId) {
@@ -1727,12 +1638,17 @@ export class PaymentService {
           payment.userId,
           subscriptionPlanId,
         );
-        void this.baleNotificationService?.notifyPublicPagePurchased(payment);
-        return { refunded: false };
+      } else {
+        /**
+         * پرداخت‌های معلقِ قدیمیِ پکیج یک‌باره (پیش از حذف پکیج): چون دیگر
+         * مسیر دائمی وجود ندارد، به همان مهلت انتقالی ۶ ماهه منتقل می‌شوند
+         * تا پول کاربر بدون دسترسی نماند.
+         */
+        await this.userSubscriptionService.grantLegacyPublicPageAccess(
+          payment.userId,
+        );
       }
 
-      await this.publicPageService.activateAfterPayment(payment);
-      await this.referralService.onReferredPublicPagePurchased(payment.userId);
       void this.baleNotificationService?.notifyPublicPagePurchased(payment);
 
       return { refunded: false };

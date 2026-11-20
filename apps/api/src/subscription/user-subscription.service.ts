@@ -7,6 +7,7 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
+  PUBLIC_PAGE_LEGACY_PLAN_KEY,
   PUBLIC_PAGE_PLAN_TYPE,
   PUBLIC_PAGE_TRIAL_PLAN_KEY,
   SMS_PLAN_TYPE,
@@ -240,20 +241,11 @@ export class UserSubscriptionService {
       return { subscription: existing, created: false };
     }
 
-    const now = new Date();
-    const subscription = subscriptionRepo.create({
+    const saved = await this.saveNewSubscription(
+      subscriptionRepo,
       userId,
-      subscriptionPlanId: plan.id,
-      price: 0,
-      smsTotal: 0,
-      smsUsed: 0,
-      status: UserSubscriptionStatus.ACTIVE,
-      startDate: now,
-      endDate: addPlanDuration(now, plan.durationDays, plan.planType),
-      freeTrialSmsSentAt: null,
-    });
-
-    const saved = await subscriptionRepo.save(subscription);
+      plan,
+    );
 
     this.logger.log(
       `دورهٔ رایگان یک‌ماههٔ پروفایل اختصاصی برای کاربر ${userId} فعال شد ` +
@@ -261,6 +253,87 @@ export class UserSubscriptionService {
     );
 
     return { subscription: saved, created: true };
+  }
+
+  /**
+   * اعطای مهلت انتقالی ۶ ماهه به خریداران قبلی پکیج صفحهٔ اختصاصی.
+   *
+   * این متد idempotent است: اگر کاربر هر اشتراک `public_page` داشته باشد
+   * (رایگان، پولی یا خودِ مهلت انتقالی) چیزی ساخته نمی‌شود تا مهلت انتقالی
+   * دوباره اعطا نشود. رکورد خرید قبلی دست‌نخورده باقی می‌ماند.
+   */
+  async grantLegacyPublicPageAccess(
+    userId: number,
+  ): Promise<{ subscription: UserSubscription; created: boolean } | null> {
+    const plan = await this.subscriptionPlanRepo.findOne({
+      where: { planKey: PUBLIC_PAGE_LEGACY_PLAN_KEY },
+    });
+
+    if (!plan) {
+      this.logger.warn(
+        `پلن مهلت انتقالی پروفایل اختصاصی (${PUBLIC_PAGE_LEGACY_PLAN_KEY}) یافت نشد؛ ` +
+          'انتقال خریداران قبلی انجام نشد.',
+      );
+      return null;
+    }
+
+    const existingSubscriptions = await this.userSubscriptionRepo.find({
+      where: { userId },
+      relations: { subscriptionPlan: true },
+      order: { createdAt: 'DESC' },
+    });
+
+    const existing = existingSubscriptions.find(
+      subscription =>
+        subscription.subscriptionPlan?.planType === PUBLIC_PAGE_PLAN_TYPE,
+    );
+
+    if (existing) {
+      return { subscription: existing, created: false };
+    }
+
+    const saved = await this.saveNewSubscription(
+      this.userSubscriptionRepo,
+      userId,
+      plan,
+    );
+
+    this.logger.log(
+      `مهلت انتقالی ۶ ماههٔ پروفایل اختصاصی برای کاربر ${userId} فعال شد ` +
+        `(پایان: ${saved.endDate.toISOString()})`,
+    );
+
+    return { subscription: saved, created: true };
+  }
+
+  /**
+   * ساخت ردیف اشتراک فعال برای یک پلن.
+   *
+   * منطق تاریخ در `addPlanDuration` است: پلن‌های `public_page` ماه تقویمی و
+   * پلن‌های `sms` روزه‌ای. شروع همیشه زمان فعلی است؛ قاعدهٔ «اضافه‌شدن به
+   * اعتبار باقی‌مانده» فقط در `activateSubscriptionAfterPayment` اعمال
+   * می‌شود.
+   */
+  private async saveNewSubscription(
+    subscriptionRepo: Repository<UserSubscription>,
+    userId: number,
+    plan: SubscriptionPlan,
+  ): Promise<UserSubscription> {
+    const now = new Date();
+
+    return subscriptionRepo.save(
+      subscriptionRepo.create({
+        userId,
+        subscriptionPlanId: plan.id,
+        price: plan.price,
+        smsTotal: 0,
+        smsUsed: 0,
+        status: UserSubscriptionStatus.ACTIVE,
+        startDate: now,
+        endDate: addPlanDuration(now, plan.durationDays, plan.planType),
+        freeTrialSmsSentAt: null,
+      }),
+    );
   }
 
   /**

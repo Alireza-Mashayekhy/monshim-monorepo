@@ -8,18 +8,14 @@ import { PaymentService } from './payment.service';
 
 /**
  * تست‌های پرداخت اشتراک «پروفایل اختصاصی»:
- *   • قیمت همیشه از پلن در بک‌اند خوانده می‌شود (نه از فرانت)؛
- *   • تمدید با اشتراک فعال مجاز است، اما با خرید یک‌باره پکیج نه؛
+ *   • `planId` اجباری است و قیمت همیشه از پلن در بک‌اند خوانده می‌شود؛
+ *   • تمدید با اشتراک فعال مجاز است؛
  *   • پرداخت موفق، اشتراک را فعال می‌کند و پرداخت ناموفق/لغوشده دست نمی‌زند.
  */
 describe('PaymentService — پرداخت اشتراک پروفایل اختصاصی', () => {
   const profile = { id: 'profile-1', userId: 7, salonName: 'سالن تست' };
 
-  function buildHarness(options?: {
-    status?: any;
-    plan?: any;
-    planFound?: boolean;
-  }) {
+  function buildHarness(options?: { plan?: any; planFound?: boolean }) {
     const savedPayments: any[] = [];
     const paymentRepo = {
       create: jest.fn((value: any) => ({ ...value })),
@@ -37,12 +33,7 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
     const publicPageService = {
       getStatusByUserId: jest
         .fn()
-        .mockResolvedValue(
-          options?.status ?? { isActive: false, reason: null },
-        ),
-      getReferralDiscountQuote: jest.fn().mockResolvedValue(null),
-      getDiscountQuote: jest.fn().mockResolvedValue(null),
-      activateAfterPayment: jest.fn().mockResolvedValue(undefined),
+        .mockResolvedValue({ isActive: false, reason: null }),
     };
     const subscriptionService = {
       findPublicPagePurchasePlan: jest
@@ -53,9 +44,9 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
     };
     const userSubscriptionService = {
       activateSubscriptionAfterPayment: jest.fn().mockResolvedValue({}),
-    };
-    const referralService = {
-      onReferredPublicPagePurchased: jest.fn().mockResolvedValue(undefined),
+      grantLegacyPublicPageAccess: jest.fn().mockResolvedValue({
+        created: true,
+      }),
     };
 
     const service = new PaymentService(
@@ -73,7 +64,7 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
       publicPageService as any,
       subscriptionService as any,
       userSubscriptionService as any,
-      referralService as any,
+      {} as any,
       {} as any,
       { get: jest.fn() } as any,
       {} as any,
@@ -104,7 +95,6 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
 
     const result = await service.initiatePublicPagePayment(
       7,
-      undefined,
       null,
       'plan-monthly',
     );
@@ -132,7 +122,6 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
 
     const result = await service.initiatePublicPagePayment(
       7,
-      undefined,
       null,
       'plan-quarterly',
     );
@@ -141,11 +130,20 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
     expect(savedPayments[0].amount).toBe(250_000);
   });
 
+  it('بدون شناسهٔ پلن رد می‌شود و پرداختی ساخته نمی‌شود', async () => {
+    const { service, savedPayments } = buildHarness({ plan: { id: 'p1' } });
+
+    await expect(service.initiatePublicPagePayment(7, null)).rejects.toThrow(
+      /پلن/,
+    );
+    expect(savedPayments).toHaveLength(0);
+  });
+
   it('شناسهٔ پلن نامعتبر رد می‌شود و پرداختی ساخته نمی‌شود', async () => {
     const { service, savedPayments } = buildHarness({ planFound: false });
 
     await expect(
-      service.initiatePublicPagePayment(7, undefined, null, 'plan-bad'),
+      service.initiatePublicPagePayment(7, null, 'plan-bad'),
     ).rejects.toThrow(/پلن/);
     expect(savedPayments).toHaveLength(0);
   });
@@ -157,31 +155,11 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
       price: 99_000,
       durationDays: 30,
     };
-    const { service } = buildHarness({
-      plan,
-      status: { isActive: true, reason: 'SUBSCRIPTION' },
-    });
+    const { service } = buildHarness({ plan });
 
     await expect(
-      service.initiatePublicPagePayment(7, undefined, null, 'plan-monthly'),
+      service.initiatePublicPagePayment(7, null, 'plan-monthly'),
     ).resolves.toMatchObject({ amount: 99_000 });
-  });
-
-  it('اگر صفحه با خرید یک‌بارهٔ پکیج فعال باشد، تمدید پذیرفته نمی‌شود', async () => {
-    const plan = {
-      id: 'plan-monthly',
-      planKey: 'public_page_monthly',
-      price: 99_000,
-      durationDays: 30,
-    };
-    const { service } = buildHarness({
-      plan,
-      status: { isActive: true, reason: 'PACKAGE' },
-    });
-
-    await expect(
-      service.initiatePublicPagePayment(7, undefined, null, 'plan-monthly'),
-    ).rejects.toThrow(/فعال است/);
   });
 
   it('پرداخت موفقِ پلن اشتراک، اشتراک کاربر را فعال می‌کند', async () => {
@@ -197,20 +175,21 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
     expect(
       userSubscriptionService.activateSubscriptionAfterPayment,
     ).toHaveBeenCalledWith(7, 'plan-monthly');
-    expect(publicPageService.activateAfterPayment).not.toHaveBeenCalled();
+    expect(publicPageService.getStatusByUserId).not.toHaveBeenCalled();
   });
 
-  it('پرداخت پکیج یک‌باره (بدون planId) همان رفتار قبلی را دارد', async () => {
-    const { service, userSubscriptionService, publicPageService } =
-      buildHarness({});
+  it('پرداخت موفقِ پکیج یک‌بارهٔ قدیمی به مهلت انتقالی منتقل می‌شود', async () => {
+    const { service, userSubscriptionService } = buildHarness({});
 
     await (service as any).fulfillPayment({
       userId: 7,
       purpose: PaymentPurpose.PUBLIC_PAGE,
-      metadata: JSON.stringify({ discountCode: 'SAVE25' }),
+      metadata: null,
     });
 
-    expect(publicPageService.activateAfterPayment).toHaveBeenCalledTimes(1);
+    expect(
+      userSubscriptionService.grantLegacyPublicPageAccess,
+    ).toHaveBeenCalledWith(7);
     expect(
       userSubscriptionService.activateSubscriptionAfterPayment,
     ).not.toHaveBeenCalled();
@@ -224,6 +203,6 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
     expect(
       userSubscriptionService.activateSubscriptionAfterPayment,
     ).not.toHaveBeenCalled();
-    expect(publicPageService.activateAfterPayment).not.toHaveBeenCalled();
+    expect(publicPageService.getStatusByUserId).not.toHaveBeenCalled();
   });
 });

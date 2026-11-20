@@ -1,5 +1,8 @@
 export const PLAN_DURATION_DAYS = 30;
 
+/** مدت اعتبار مهلت انتقالی خریداران قبلی «پروفایل اختصاصی» (۶ ماه). */
+export const PUBLIC_PAGE_LEGACY_DURATION_DAYS = 180;
+
 /**
  * نوع پلن اشتراک.
  *
@@ -112,10 +115,29 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlanDefinition[] = [
     sortOrder: 12,
     planType: PUBLIC_PAGE_PLAN_TYPE,
   },
+
+  // ── مهلت انتقالی خریداران قبلی ──────────────────────────────────────
+  // خریداران پکیج یک‌بارهٔ سابق ۶ ماه اعتبار می‌گیرند. این پلن قابل خرید
+  // نیست (در `PUBLIC_PAGE_PURCHASE_PLAN_KEYS` نیست) و فقط هنگام بوت و به‌صورت
+  // خودکار اعطا می‌شود.
+  {
+    planKey: 'public_page_legacy',
+    name: 'مهلت انتقالی خریداران قبلی پروفایل اختصاصی',
+    smsCount: 0,
+    price: 0,
+    durationDays: PUBLIC_PAGE_LEGACY_DURATION_DAYS,
+    description:
+      'مهلت انتقالی ۶ ماهه برای خریداران قبلی پروفایل اختصاصی (غیرقابل خرید).',
+    sortOrder: 13,
+    planType: PUBLIC_PAGE_PLAN_TYPE,
+  },
 ];
 
 /** کلید پلن دورهٔ رایگان پروفایل اختصاصی. */
 export const PUBLIC_PAGE_TRIAL_PLAN_KEY = 'public_page_trial';
+
+/** کلید پلن مهلت انتقالی خریداران قبلی پروفایل اختصاصی. */
+export const PUBLIC_PAGE_LEGACY_PLAN_KEY = 'public_page_legacy';
 
 /** کلیدهای پلن‌هایی که آرایشگر می‌تواند برای خرید/تمدید پروفایل اختصاصی انتخاب کند. */
 export const PUBLIC_PAGE_PURCHASE_PLAN_KEYS = [

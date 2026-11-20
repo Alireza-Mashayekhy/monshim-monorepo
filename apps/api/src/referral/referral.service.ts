@@ -109,7 +109,13 @@ export class ReferralService {
     );
   }
 
-  /** آیا **آرایشگر دعوت‌شده** صفحهٔ اختصاصی خریده است؟ */
+  /**
+   * آیا **آرایشگر دعوت‌شده** پیش‌تر صفحهٔ اختصاصی خریده است؟
+   *
+   * سیستم پکیج یک‌باره حذف شده است، اما پاداش دعوت‌های **قبلی** نباید از دست
+   * برود: خرید قبلی را از روی رکورد `barber_public_page_purchases` خوانده و
+   * برای پاداش‌های معلق قبلی به‌کار می‌بریم. دستی‌کاری سوابق نیز انجام نمی‌شود.
+   */
   private hasReferredPurchasedPage(referral: Referral) {
     return this.publicPageService.hasPurchasedPackageByUserId(
       referral.referredUserId,

@@ -78,19 +78,47 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
     planType: 'public_page',
   } as any;
 
+  const legacyPlan = {
+    id: 'plan-legacy',
+    planKey: 'public_page_legacy',
+    name: 'مهلت انتقالی خریداران قبلی',
+    price: 0,
+    smsCount: 0,
+    durationDays: 180,
+    planType: 'public_page',
+  } as any;
+
   function createHarness(options?: {
     plans?: any[];
     subscriptions?: any[];
     claimAffected?: number[];
   }) {
-    const plans = options?.plans ?? [trialPlan, monthlyPlan, quarterlyPlan];
+    const plans = options?.plans ?? [
+      trialPlan,
+      monthlyPlan,
+      quarterlyPlan,
+      legacyPlan,
+    ];
     const subscriptions = [...(options?.subscriptions ?? [])];
     const claimQueue = [...(options?.claimAffected ?? [1])];
     let claimCall = 0;
 
+    // مثل TypeORM با `relations: { subscriptionPlan: true }`، رابطهٔ پلن را
+    // از روی `subscriptionPlanId` پر می‌کنیم تا ردیف‌های تازه‌ساخته هم پلن داشته باشند.
+    const withPlan = (row: any) =>
+      row.subscriptionPlan
+        ? row
+        : {
+            ...row,
+            subscriptionPlan:
+              plans.find(plan => plan.id === row.subscriptionPlanId) ?? null,
+          };
+
     const userSubscriptionRepo: any = {
-      findOne: jest.fn(async () => subscriptions[0] ?? null),
-      find: jest.fn(async () => subscriptions),
+      findOne: jest.fn(async () =>
+        subscriptions[0] ? withPlan(subscriptions[0]) : null,
+      ),
+      find: jest.fn(async () => subscriptions.map(withPlan)),
       create: jest.fn((value: any) => ({ ...value })),
       save: jest.fn(async (value: any) => {
         const index = subscriptions.findIndex(row => row.id === value.id);
@@ -211,6 +239,68 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
     const { service, subscriptions } = createHarness({ plans: [] });
 
     await expect(service.grantFreePublicPageTrial(42)).resolves.toBeNull();
+    expect(subscriptions).toHaveLength(0);
+  });
+
+  it('مهلت انتقالی خریداران قبلی: رایگان و دقیقاً شش ماه تقویمی از زمان اعطا', async () => {
+    const { service, subscriptions } = createHarness();
+
+    const result = await service.grantLegacyPublicPageAccess(42);
+
+    expect(result?.created).toBe(true);
+    expect(subscriptions).toHaveLength(1);
+    expect(subscriptions[0]).toMatchObject({
+      userId: 42,
+      subscriptionPlanId: 'plan-legacy',
+      price: 0,
+      smsTotal: 0,
+      status: UserSubscriptionStatus.ACTIVE,
+    });
+    expect(subscriptions[0].endDate).toEqual(
+      addPlanDuration(subscriptions[0].startDate, 180, 'public_page'),
+    );
+    // ۱۸۰ روز = ۶ ماه تقویمی؛ نه ۱۸۰ روز شمارشی.
+    const start: Date = subscriptions[0].startDate;
+    const end: Date = subscriptions[0].endDate;
+    expect(
+      (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+        (end.getUTCMonth() - start.getUTCMonth()),
+    ).toBe(6);
+  });
+
+  it('مهلت انتقالی فقط یک‌بار اعطا می‌شود؛ اگر کاربر هر اشتراک پروفایل اختصاصی داشته باشد چیزی ساخته نمی‌شود', async () => {
+    const { service, subscriptions } = createHarness({
+      subscriptions: [
+        {
+          id: 'sub-monthly',
+          userId: 42,
+          subscriptionPlanId: 'plan-monthly',
+          subscriptionPlan: monthlyPlan,
+          status: UserSubscriptionStatus.ACTIVE,
+          endDate: new Date('2099-01-01T00:00:00.000Z'),
+        },
+      ],
+    });
+
+    const first = await service.grantLegacyPublicPageAccess(42);
+    expect(first?.created).toBe(false);
+    expect(first?.subscription.id).toBe('sub-monthly');
+    expect(subscriptions).toHaveLength(1);
+
+    // اجرای دوباره روی کاربری که خودِ مهلت انتقالی را گرفته است.
+    const { service: fresh, subscriptions: freshRows } = createHarness();
+    await fresh.grantLegacyPublicPageAccess(7);
+    const again = await fresh.grantLegacyPublicPageAccess(7);
+    expect(again?.created).toBe(false);
+    expect(freshRows).toHaveLength(1);
+  });
+
+  it('اگر پلن مهلت انتقالی در دیتابیس نباشد، null برمی‌گرداند و چیزی نمی‌سازد', async () => {
+    const { service, subscriptions } = createHarness({
+      plans: [trialPlan, monthlyPlan, quarterlyPlan],
+    });
+
+    await expect(service.grantLegacyPublicPageAccess(42)).resolves.toBeNull();
     expect(subscriptions).toHaveLength(0);
   });
 

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class InitiatePublicPagePaymentDto {
   /**
@@ -6,13 +6,7 @@ export class InitiatePublicPagePaymentDto {
    * کرده است. قیمت نهایی در بک‌اند از روی همین پلن محاسبه می‌شود و به
    * مقدار ارسال‌شده از فرانت اعتماد نمی‌شود.
    */
-  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  planId?: string;
-
-  @IsOptional()
-  @IsString()
-  @Matches(/^[a-zA-Z0-9_-]{3,32}$/)
-  discountCode?: string;
+  planId: string;
 }
