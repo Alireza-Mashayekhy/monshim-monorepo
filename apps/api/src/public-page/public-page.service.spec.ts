@@ -247,6 +247,14 @@ describe('PublicPageService', () => {
           params?.legacyGrant ? params.legacyGrant(userId) : { created: true },
         ),
       ),
+      backfillFreePublicPageTrialForExistingBarbers: jest
+        .fn()
+        .mockResolvedValue({
+          candidates: 0,
+          granted: 0,
+          failed: 0,
+          dryRun: false,
+        }),
     };
 
     const service = new PublicPageService(
@@ -321,6 +329,7 @@ describe('PublicPageService', () => {
     expect(status.reason).toBe('SUBSCRIPTION');
     expect(status.slug).toBe('aria-salon');
     expect(status.publicUrl).toBe('https://monshiim.ir/provider/aria-salon');
+    expect(status.subscription?.isFreeTrial).toBe(true);
     // دیگر فیلدهای مسیر حذف‌شده وجود ندارد.
     expect('paidBookingsCount' in status).toBe(false);
     expect('packagePriceTomans' in status).toBe(false);
@@ -767,6 +776,47 @@ describe('PublicPageService', () => {
     ]);
   });
 
+  it('اشتراک رایگان و خریداری‌شده هر دو از یک دایرکتوری فعال استفاده می‌کنند', async () => {
+    const { service } = createService({
+      profiles: [
+        {
+          id: 'trial-profile',
+          userId: 10,
+          slug: 'free-trial-salon',
+          updatedAt: '2026-03-05T00:00:00.000Z',
+          bio: 'پروفایل کامل آرایشگر',
+          portfolioImages: ['/uploads/portfolio/trial.webp'],
+        },
+        {
+          id: 'paid-profile',
+          userId: 20,
+          slug: 'paid-salon',
+          updatedAt: '2026-03-06T00:00:00.000Z',
+          bio: 'پروفایل کامل آرایشگر',
+          portfolioImages: ['/uploads/portfolio/paid.webp'],
+        },
+      ],
+      directorySubscriptions: [
+        {
+          userId: 10,
+          planKey: 'public_page_trial',
+          endDate: new Date('2026-12-01T00:00:00.000Z'),
+        },
+        {
+          userId: 20,
+          planKey: 'public_page_monthly',
+          endDate: new Date('2026-12-01T00:00:00.000Z'),
+        },
+      ],
+    });
+
+    const directory = await service.getActiveDirectory();
+    expect(directory.map(entry => entry.slug)).toEqual([
+      'free-trial-salon',
+      'paid-salon',
+    ]);
+  });
+
   it('lastmodِ پروفایلِ بدون updated_at به createdAt برمی‌گردد (نه تاریخ خرید)', async () => {
     const { service } = createService({
       profiles: [
@@ -851,15 +901,22 @@ describe('PublicPageService', () => {
       ).toHaveBeenCalledTimes(1);
     });
 
-    it('فقط با ENABLE_STARTUP_DATA_TASKS هنگام بوت اجرا می‌شود و خطا بوت را متوقف نمی‌کند', async () => {
+    it('انتقال legacy به فلگ وابسته است اما backfill ضروری trial همیشه اجرا می‌شود و خطا بوت را متوقف نمی‌کند', async () => {
       const previous = process.env.ENABLE_STARTUP_DATA_TASKS;
       try {
         process.env.ENABLE_STARTUP_DATA_TASKS = 'false';
-        const { service, purchaseRepo } = createService({
+        const {
+          service,
+          purchaseRepo,
+          userSubscriptionService: disabledSubscriptionService,
+        } = createService({
           legacyPurchases: [{ userId: 7 }],
         });
         await service.onModuleInit();
         expect(purchaseRepo.find).not.toHaveBeenCalled();
+        expect(
+          disabledSubscriptionService.backfillFreePublicPageTrialForExistingBarbers,
+        ).toHaveBeenCalledTimes(1);
 
         process.env.ENABLE_STARTUP_DATA_TASKS = 'true';
         const { service: enabled, userSubscriptionService } = createService({

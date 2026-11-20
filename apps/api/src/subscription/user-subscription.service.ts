@@ -6,11 +6,13 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isDuplicateEntryError } from 'src/common/utils/db-error.util';
 import {
   PUBLIC_PAGE_LEGACY_PLAN_KEY,
   PUBLIC_PAGE_PLAN_TYPE,
   PUBLIC_PAGE_TRIAL_PLAN_KEY,
   SMS_PLAN_TYPE,
+  SUBSCRIPTION_PLANS,
   SubscriptionPlanType,
 } from 'src/subscription/constants';
 import { SubscriptionPlan } from 'src/subscription/entities/subscription-plan.entity';
@@ -78,31 +80,24 @@ export class UserSubscriptionService {
     userId: number,
     planType: SubscriptionPlanType = SMS_PLAN_TYPE,
   ) {
-    const userSubscription = await this.userSubscriptionRepo
-      .createQueryBuilder('subscription')
-      .innerJoinAndSelect('subscription.subscriptionPlan', 'plan')
-      .where('subscription.userId = :userId', { userId })
-      .andWhere('subscription.status = :status', {
-        status: UserSubscriptionStatus.ACTIVE,
-      })
-      .andWhere('plan.planType = :planType', { planType })
-      .orderBy('subscription.endDate', 'DESC')
-      .getOne();
-
-    if (!userSubscription) {
-      return null;
-    }
-
-    // اگر منقضی شده
-    if (userSubscription.endDate <= new Date()) {
-      userSubscription.status = UserSubscriptionStatus.EXPIRED;
-
-      await this.userSubscriptionRepo.save(userSubscription);
-
-      return null;
-    }
-
-    return userSubscription;
+    const now = new Date();
+    return (
+      (await this.userSubscriptionRepo
+        .createQueryBuilder('subscription')
+        .innerJoinAndSelect('subscription.subscriptionPlan', 'plan')
+        .where('subscription.userId = :userId', { userId })
+        .andWhere('subscription.status = :status', {
+          status: UserSubscriptionStatus.ACTIVE,
+        })
+        .andWhere('plan.planType = :planType', { planType })
+        // A paid renewal can be queued after the current term. Do not make it
+        // active before its start, and use the same interval predicate as the
+        // public directory/sitemap.
+        .andWhere('subscription.startDate <= :now', { now })
+        .andWhere('subscription.endDate > :now', { now })
+        .orderBy('subscription.endDate', 'DESC')
+        .getOne()) ?? null
+    );
   }
 
   /** اشتراک فعال «پروفایل اختصاصی» کاربر (دورهٔ رایگان یا تمدید پولی). */
@@ -116,6 +111,7 @@ export class UserSubscriptionService {
    */
   async findActivePublicPageSubscriptionsForUsers(userIds: number[]) {
     if (userIds.length === 0) return [];
+    const now = new Date();
 
     return this.userSubscriptionRepo
       .createQueryBuilder('subscription')
@@ -127,7 +123,8 @@ export class UserSubscriptionService {
       .andWhere('plan.planType = :planType', {
         planType: PUBLIC_PAGE_PLAN_TYPE,
       })
-      .andWhere('subscription.endDate > :now', { now: new Date() })
+      .andWhere('subscription.startDate <= :now', { now })
+      .andWhere('subscription.endDate > :now', { now })
       .getMany();
   }
 
@@ -202,23 +199,79 @@ export class UserSubscriptionService {
     userId: number,
     manager?: EntityManager,
   ): Promise<{ subscription: UserSubscription; created: boolean } | null> {
-    const subscriptionRepo = manager
-      ? manager.getRepository(UserSubscription)
-      : this.userSubscriptionRepo;
-    const planRepo = manager
-      ? manager.getRepository(SubscriptionPlan)
-      : this.subscriptionPlanRepo;
+    // For backfill/admin calls, create a transaction and serialize grants on
+    // the user's row. Signup already passes its transaction manager. This
+    // closes the check-then-insert race when two instances backfill together.
+    if (!manager) {
+      return this.userSubscriptionRepo.manager.transaction(transactionManager =>
+        this.grantFreePublicPageTrial(userId, transactionManager),
+      );
+    }
 
-    const plan = await planRepo.findOne({
+    const user = await manager.getRepository(User).findOne({
+      where: { id: userId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!user) return null;
+
+    const subscriptionRepo = manager.getRepository(UserSubscription);
+    const planRepo = manager.getRepository(SubscriptionPlan);
+
+    let plan = await planRepo.findOne({
       where: { planKey: PUBLIC_PAGE_TRIAL_PLAN_KEY },
     });
 
+    // ثبت‌نام نباید به‌طور خاموش بدون اشتراک موفق شود فقط چون seed عمومی
+    // (که در production ممکن است با feature flag غیرفعال باشد) اجرا نشده است.
+    // این پلنِ غیرقابل‌خرید را به‌صورت حداقلی و idempotent ایجاد می‌کنیم.
     if (!plan) {
-      this.logger.warn(
-        `پلن دورهٔ رایگان پروفایل اختصاصی (${PUBLIC_PAGE_TRIAL_PLAN_KEY}) یافت نشد؛ ` +
-          'دورهٔ رایگان برای کاربر اعطا نشد. سرور را دوباره بالا بیاورید تا پلن‌ها seed شوند.',
+      const definition = SUBSCRIPTION_PLANS.find(
+        item => item.planKey === PUBLIC_PAGE_TRIAL_PLAN_KEY,
       );
-      return null;
+      if (!definition) {
+        this.logger.error(
+          `تعریف پلن ${PUBLIC_PAGE_TRIAL_PLAN_KEY} در کد موجود نیست.`,
+        );
+        return null;
+      }
+
+      try {
+        plan = await planRepo.save(
+          planRepo.create({
+            planKey: definition.planKey,
+            name: definition.name,
+            smsCount: definition.smsCount,
+            price: definition.price,
+            durationDays: definition.durationDays,
+            description: definition.description,
+            isActive: true,
+            sortOrder: definition.sortOrder,
+            planType: definition.planType,
+          }),
+        );
+      } catch (error) {
+        // اگر چند ثبت‌نام هم‌زمان اولین ردیف را بسازند، کلید یکتای plan_key
+        // برنده را تعیین می‌کند و درخواست دیگر همان ردیف را دوباره می‌خواند.
+        if (!isDuplicateEntryError(error)) throw error;
+        plan = await planRepo.findOne({
+          where: { planKey: PUBLIC_PAGE_TRIAL_PLAN_KEY },
+        });
+      }
+
+      if (!plan) {
+        this.logger.error(
+          `پلن ${PUBLIC_PAGE_TRIAL_PLAN_KEY} پس از ایجاد مجدد خوانده نشد.`,
+        );
+        return null;
+      }
+    }
+
+    // اگر پلن از نسخهٔ قدیمی یا seed ناقص با نوع پیش‌فرض sms ثبت شده باشد،
+    // رابطهٔ اشتراک از Queryهای public_page پنهان می‌ماند. این پلن فقط
+    // برای صفحهٔ اختصاصی تعریف شده و نوع آن باید حتماً اصلاح شود.
+    if (plan.planType !== PUBLIC_PAGE_PLAN_TYPE) {
+      plan.planType = PUBLIC_PAGE_PLAN_TYPE;
+      plan = await planRepo.save(plan);
     }
 
     /**
@@ -331,7 +384,7 @@ export class UserSubscriptionService {
       const result = await this.grantFreePublicPageTrial(userId);
 
       if (result === null) {
-        // پلن دورهٔ رایگان seed نشده؛ ادامه‌دادن فقط لاگ تکراری تولید می‌کند.
+        // دیگر کاندیدها هم در صورت نبود کاربر/پلن قابل اعطا نیستند.
         failed = candidates.length - index;
         break;
       }

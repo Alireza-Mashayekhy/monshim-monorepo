@@ -129,8 +129,12 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
       createQueryBuilder: jest.fn(() => ({
         update: jest.fn().mockReturnThis(),
         set: jest.fn().mockReturnThis(),
+        innerJoinAndSelect: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(null),
+        getMany: jest.fn().mockResolvedValue([]),
         execute: jest.fn(async () => {
           const affected = claimQueue[claimCall] ?? 0;
           claimCall += 1;
@@ -146,7 +150,24 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
           return plans.find(plan => plan.planKey === where.planKey) ?? null;
         return null;
       }),
+      create: jest.fn((value: any) => ({ id: 'plan-created', ...value })),
+      save: jest.fn(async (value: any) => {
+        plans.push(value);
+        return value;
+      }),
     };
+
+    const manager: any = {
+      getRepository: jest.fn((entity: any) => {
+        if (entity.name === 'UserSubscription') return userSubscriptionRepo;
+        if (entity.name === 'SubscriptionPlan') return subscriptionPlanRepo;
+        return { findOne: jest.fn(async () => ({ id: 42 })) };
+      }),
+      transaction: jest.fn(async (callback: (transactionManager: any) => any) =>
+        callback(manager),
+      ),
+    };
+    userSubscriptionRepo.manager = manager;
 
     const service = new UserSubscriptionService(
       userSubscriptionRepo,
@@ -155,8 +176,36 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
       {} as any,
     );
 
-    return { service, subscriptions };
+    return { service, subscriptions, userSubscriptionRepo };
   }
+
+  it('وضعیت فعال فقط برای بازهٔ startDate تا endDate و status=active محاسبه می‌شود', async () => {
+    const { service, userSubscriptionRepo } = createHarness();
+
+    await service.getCurrentPublicPageSubscription(42);
+    let queryBuilder =
+      userSubscriptionRepo.createQueryBuilder.mock.results[0].value;
+    expect(queryBuilder.andWhere.mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          'subscription.status = :status',
+          { status: UserSubscriptionStatus.ACTIVE },
+        ],
+        ['subscription.startDate <= :now', expect.any(Object)],
+        ['subscription.endDate > :now', expect.any(Object)],
+      ]),
+    );
+
+    await service.findActivePublicPageSubscriptionsForUsers([42]);
+    queryBuilder =
+      userSubscriptionRepo.createQueryBuilder.mock.results[1].value;
+    expect(queryBuilder.andWhere.mock.calls).toEqual(
+      expect.arrayContaining([
+        ['subscription.startDate <= :now', expect.any(Object)],
+        ['subscription.endDate > :now', expect.any(Object)],
+      ]),
+    );
+  });
 
   it('دورهٔ رایگان را با قیمت صفر و دقیقاً یک ماه تقویمی اعطا می‌کند', async () => {
     const { service, subscriptions } = createHarness();
@@ -175,6 +224,10 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
     expect(subscriptions[0].endDate).toEqual(
       addPlanDuration(subscriptions[0].startDate, 30, 'public_page'),
     );
+
+    const repeated = await service.grantFreePublicPageTrial(42);
+    expect(repeated?.created).toBe(false);
+    expect(subscriptions).toHaveLength(1);
   });
 
   it('دورهٔ رایگان فقط یک‌بار اعطا می‌شود (کاربر تکراری/سوءاستفاده)', async () => {
@@ -235,11 +288,31 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
     expect(subscriptions).toHaveLength(2);
   });
 
-  it('اگر پلن دورهٔ رایگان در دیتابیس نباشد، چیزی اعطا نمی‌شود', async () => {
+  it('نوع یک پلن trial قدیمی با planType اشتباه را پیش از اعطا اصلاح می‌کند', async () => {
+    const staleTrialPlan = { ...trialPlan, planType: 'sms' };
+    const { service, subscriptions } = createHarness({
+      plans: [staleTrialPlan],
+    });
+
+    const result = await service.grantFreePublicPageTrial(42);
+
+    expect(result?.created).toBe(true);
+    expect(staleTrialPlan.planType).toBe('public_page');
+    expect(subscriptions).toHaveLength(1);
+  });
+
+  it('اگر پلن trial seed نشده باشد، آن را idempotent ایجاد می‌کند و اشتراک را اعطا می‌کند', async () => {
     const { service, subscriptions } = createHarness({ plans: [] });
 
-    await expect(service.grantFreePublicPageTrial(42)).resolves.toBeNull();
-    expect(subscriptions).toHaveLength(0);
+    const result = await service.grantFreePublicPageTrial(42);
+
+    expect(result?.created).toBe(true);
+    expect(subscriptions).toHaveLength(1);
+    expect(subscriptions[0]).toMatchObject({
+      userId: 42,
+      subscriptionPlanId: 'plan-created',
+      status: UserSubscriptionStatus.ACTIVE,
+    });
   });
 
   it('مهلت انتقالی خریداران قبلی: رایگان و دقیقاً شش ماه تقویمی از زمان اعطا', async () => {
@@ -447,6 +520,11 @@ describe('تکمیل دورهٔ رایگان برای آرایشگرهای ثب�
         if (where?.id) return plans.find(plan => plan.id === where.id) ?? null;
         return null;
       }),
+      create: jest.fn((value: any) => ({ id: 'plan-created', ...value })),
+      save: jest.fn(async (value: any) => {
+        plans.push(value);
+        return value;
+      }),
     };
 
     const userSubscriptionRepo: any = {
@@ -466,6 +544,18 @@ describe('تکمیل دورهٔ رایگان برای آرایشگرهای ثب�
             candidates.map(id => ({ id: String(id) })),
           ),
         })),
+        transaction: jest.fn(
+          async (callback: (transactionManager: any) => any) =>
+            callback({
+              getRepository: (entity: any) => {
+                if (entity.name === 'UserSubscription')
+                  return userSubscriptionRepo;
+                if (entity.name === 'SubscriptionPlan')
+                  return subscriptionPlanRepo;
+                return { findOne: jest.fn(async () => ({ id: 11 })) };
+              },
+            }),
+        ),
       },
     };
 
@@ -522,7 +612,7 @@ describe('تکمیل دورهٔ رایگان برای آرایشگرهای ثب�
     ).resolves.toEqual({ candidates: 0, granted: 0, failed: 0, dryRun: false });
   });
 
-  it('اگر پلن دورهٔ رایگان seed نشده باشد، failed گزارش می‌شود و چیزی ساخته نمی‌شود', async () => {
+  it('اگر پلن trial از قبل seed نشده باشد، backfill آن را ایجاد و همهٔ کاندیدها را فعال می‌کند', async () => {
     const { service, subscriptions } = createBackfillHarness({
       candidateIds: [11, 12],
       plans: [],
@@ -532,11 +622,11 @@ describe('تکمیل دورهٔ رایگان برای آرایشگرهای ثب�
       service.backfillFreePublicPageTrialForExistingBarbers(),
     ).resolves.toEqual({
       candidates: 2,
-      granted: 0,
-      failed: 2,
+      granted: 2,
+      failed: 0,
       dryRun: false,
     });
 
-    expect(subscriptions).toHaveLength(0);
+    expect(subscriptions).toHaveLength(2);
   });
 });
