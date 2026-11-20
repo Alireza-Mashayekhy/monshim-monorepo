@@ -30,6 +30,7 @@ import {
   notRefundedCondition,
 } from 'src/payment/payment-ledger';
 import { Referral } from 'src/referral/entities/referral.entity';
+import { PUBLIC_PAGE_TRIAL_PLAN_KEY } from 'src/subscription/constants';
 import { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { Brackets, In, IsNull, Repository, SelectQueryBuilder } from 'typeorm';
@@ -151,35 +152,30 @@ export class PublicPageService implements OnModuleInit {
   ) {}
 
   /**
-   * هنگام بوت، خریداران قبلی پکیج را به مدل اشتراک منتقل می‌کنیم.
-   *
-   * بعد از `SubscriptionService.onModuleInit` (seed پلن‌ها) اجرا می‌شود چون
-   * `SubscriptionModule` قبل از این ماژول ساخته می‌شود. اگر پلن seed نشده
-   * باشد، متد فقط هشدار می‌دهد و در بوت بعدی دوباره تلاش می‌کند.
+   * هنگام بوت، کاربران قبلی بدون ردیف اشتراک را تکمیل می‌کنیم. انتقال
+   * خریداران قدیمی طبق فلگ startup و backfill دورهٔ رایگان مستقل از آن است.
+   * هر دو مسیر idempotent هستند؛ در صورت خطای گذرا، بوت بعدی دوباره تلاش می‌کند.
    */
   async onModuleInit() {
-    if (!isRuntimeFlagEnabled('ENABLE_STARTUP_DATA_TASKS')) {
-      return;
+    /**
+     * انتقال خریداران قدیمی، مانند سایر داده‌سازی‌های راه‌اندازی، فقط با
+     * ENABLE_STARTUP_DATA_TASKS اجرا می‌شود.
+     */
+    if (isRuntimeFlagEnabled('ENABLE_STARTUP_DATA_TASKS')) {
+      try {
+        await this.grantLegacyPublicPageAccess();
+      } catch (error) {
+        this.logger.error(
+          `انتقال خریداران قبلی صفحهٔ اختصاصی انجام نشد: ${String(error)}`,
+        );
+      }
     }
 
     /**
-     * ترتیب مهم است:
-     *   ۱. مهلت انتقالی خریداران قبلی پکیج (۱۸۰ روز) — این کاربران از قبل
-     *      «دسترسی» داشته‌اند و نباید فقط یک ماه رایگان بگیرند؛
-     *   ۲. تکمیل دورهٔ رایگان یک‌ماهه برای بقیهٔ آرایشگرهایی که پیش از افزودن
-     *      این قابلیت ثبت‌نام کرده‌اند و هیچ اشتراک صفحهٔ اختصاصی ندارند.
-     *
-     * هر دو متد idempotent هستند: اجرای هر بوت، نه اشتراک تکراری می‌سازد و
-     * نه اشتراک فعالِ موجود را تمدید/بازنویسی می‌کند.
+     * تکمیل دورهٔ رایگان برای کاربران قدیمی یک کارِ ضروری و idempotent است،
+     * نه seed اختیاری. مستقل از فلگ seed اجرا می‌شود؛ اگر پلن trial موجود
+     * نباشد، UserSubscriptionService آن را با کلید یکتا ایجاد می‌کند.
      */
-    try {
-      await this.grantLegacyPublicPageAccess();
-    } catch (error) {
-      this.logger.error(
-        `انتقال خریداران قبلی صفحهٔ اختصاصی انجام نشد: ${String(error)}`,
-      );
-    }
-
     try {
       await this.userSubscriptionService.backfillFreePublicPageTrialForExistingBarbers();
     } catch (error) {
@@ -434,9 +430,11 @@ export class PublicPageService implements OnModuleInit {
             planId: subscription.subscriptionPlanId,
             planKey: subscription.subscriptionPlan?.planKey ?? null,
             planName: subscription.subscriptionPlan?.name ?? '',
+            // Decimal columns may be returned by MySQL as strings. Identify the
+            // trial by its stable plan key rather than strict numeric equality.
             isFreeTrial:
-              subscription.subscriptionPlan?.price === 0 &&
-              subscription.price === 0,
+              subscription.subscriptionPlan?.planKey ===
+              PUBLIC_PAGE_TRIAL_PLAN_KEY,
             price: Number(subscription.price),
             startDate: subscription.startDate.toISOString(),
             endDate: subscription.endDate.toISOString(),
