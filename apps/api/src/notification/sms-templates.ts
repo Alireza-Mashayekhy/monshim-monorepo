@@ -72,7 +72,32 @@ export const SMS_TEMPLATES = {
    * متغیر محیطی `SMS_IR_TEMPLATE_PUBLIC_PAGE_TRIAL` بدون تغییر کد تنظیم کرد.
    */
   PUBLIC_PAGE_FREE_TRIAL: 415808,
+
+  /**
+   * ⏳ یادآوری «۷ روز مانده به پایان اشتراک صفحهٔ اختصاصی» — پیامک به آرایشگر
+   *
+   * چند روز پیش از انقضای اشتراک «پروفایل اختصاصی» ارسال می‌شود تا آرایشگر
+   * پیش از قطع‌شدن دسترسی تمدید کند (قطع‌شدن، به سئو و رتبهٔ صفحه آسیب
+   * می‌زند). متن قالب ثبت‌شده در پنل sms.ir:
+   *   «#NAME# عزیز
+   *    فقط 7 روز به پایان اشتراک صفحه اختصاصی شما در منشیم مانده است. ⏳
+   *    برای جلوگیری از غیر فعال شدن و آسیب به سئوی صفحه ی خود حتما اشتراک
+   *    خود را تمدید کنید. 🔔
+   *    monshiim.ir»
+   *
+   * شناسهٔ قالب: ۹۲۵۸۰۶. می‌توان آن را از طریق متغیر محیطی
+   * `SMS_IR_TEMPLATE_PUBLIC_PAGE_EXPIRING` بدون تغییر کد تنظیم کرد.
+   */
+  PUBLIC_PAGE_EXPIRING_REMINDER: 925806,
 } as const;
+
+/**
+ * چند روز پیش از پایان اشتراک صفحهٔ اختصاصی یادآوری پیامکی بفرستیم.
+ *
+ * مقدار ۷ همان چیزی است که متن قالب (شناسهٔ ۹۲۵۸۰۶) اعلام می‌کند؛ اگر این
+ * عدد را عوض کنید، متن قالب پنل sms.ir هم باید هم‌زمان به‌روزرسانی شود.
+ */
+export const PUBLIC_PAGE_EXPIRING_REMINDER_DAYS = 7;
 
 /** تبدیل ارقام انگلیسی به فارسی */
 export function toFaDigits(value: string | number): string {
@@ -258,5 +283,17 @@ export function withdrawalPaidParams(params: WithdrawalPaidParams) {
  * نام آرایشگر به همراه یک fallback زمانی که نام خالی است ارسال می‌شود.
  */
 export function publicPageFreeTrialParams(params: { barberName?: string }) {
+  return [{ name: 'NAME', value: clipForSms(params.barberName, 'آرایشگر') }];
+}
+
+/**
+ * پارامترهای قالب «یادآوری پایان اشتراک صفحهٔ اختصاصی» (قالب ۹۲۵۸۰۶).
+ *
+ * قالب فقط یک جایگاه `#NAME#` دارد (نام آرایشگر). تعداد روز (۷) داخل متن
+ * قالب ثابت است، پس پارامتر دیگری لازم نیست.
+ */
+export function publicPageExpiringReminderParams(params: {
+  barberName?: string;
+}) {
   return [{ name: 'NAME', value: clipForSms(params.barberName, 'آرایشگر') }];
 }

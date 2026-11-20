@@ -48,6 +48,14 @@ import {
 
 const URL_HOST_PREFIX = `${siteConfig.url.replace(/^https?:\/\//, '')}/provider/`;
 
+/**
+ * آستانهٔ هشدار «اشتراک در حال پایان است» — باید با
+ * `PUBLIC_PAGE_EXPIRING_REMINDER_DAYS` در بک‌اند
+ * (`apps/api/src/notification/sms-templates.ts`) یکی باشد، چون همان عدد
+ * متن پیامک «۷ روز مانده» (قالب ۹۲۵۸۰۶) را تعیین می‌کند.
+ */
+const EXPIRY_WARNING_DAYS = 7;
+
 const SUBSCRIPTION_TICK_MS = 60_000;
 let subscriptionNowTick = Math.floor(Date.now() / SUBSCRIPTION_TICK_MS);
 
@@ -451,6 +459,29 @@ export default function PublicPagePage() {
                 دارد.
               </p>
             )}
+
+            {/*
+              همان هشدار پیامک «۷ روز مانده» — این‌جا هم دیده می‌شود تا اگر
+              آرایشگر پیامک را ندید، از داشبورد هم متوجه شود. آستانه از همان
+              مقدار بک‌اند (`PUBLIC_PAGE_EXPIRING_REMINDER_DAYS = 7`) می‌آید.
+            */}
+            {isActive &&
+              subscription &&
+              subscriptionRemainingDays > 0 &&
+              subscriptionRemainingDays <= EXPIRY_WARNING_DAYS && (
+                <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-xs leading-6 text-amber-900">
+                  <TriangleAlert size={15} className="mt-0.5 shrink-0" />
+                  <span>
+                    <strong className="font-black">
+                      فقط {toPersianDigits(subscriptionRemainingDays)} روز به
+                      پایان اشتراک صفحهٔ اختصاصی مانده است.
+                    </strong>{' '}
+                    با پایان اعتبار، صفحه از دسترس عموم خارج می‌شود و آسیب به
+                    سئوی صفحه وارد می‌شود. برای تمدید، از پلن‌های پایین صفحه
+                    استفاده کنید.
+                  </span>
+                </div>
+              )}
           </AppCard>
 
           {/* وضعیت اشتراک «پروفایل اختصاصی» (دورهٔ رایگان یا پلن تمدید پولی) */}

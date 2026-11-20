@@ -111,4 +111,11 @@ SELECT 'user_subscriptions.free_trial_sms_sent_at (idempotency پیامک دور
        IF(COUNT(*) > 0, 'OK', 'MISSING')
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subscriptions'
-  AND COLUMN_NAME = 'free_trial_sms_sent_at';
+  AND COLUMN_NAME = 'free_trial_sms_sent_at'
+
+UNION ALL
+SELECT 'user_subscriptions.expiry_reminder_sms_sent_at (idempotency پیامک ۷ روز مانده)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subscriptions'
+  AND COLUMN_NAME = 'expiry_reminder_sms_sent_at';
