@@ -38,6 +38,11 @@ export interface PublicPageSubscriptionStatus {
   startDate: string;
   endDate: string;
   status: string;
+  /**
+   * وضعیت نمایشیِ مشتق از بازهٔ زمانی (مقدار بک‌اند، از همان منطق مرکزی):
+   * `active` در بازه، `scheduled` شروعِ آیندهٔ تمدید صف‌شده، `expired` منقضی.
+   */
+  display?: 'active' | 'scheduled' | 'expired';
 }
 
 export interface PublicPageStatus {
@@ -63,6 +68,12 @@ export interface PublicPageStatus {
    * یا پلن تمدید پولی). `null` یعنی صفحه غیرفعال است.
    */
   subscription?: PublicPageSubscriptionStatus | null;
+  /**
+   * آخرین اشتراک پروفایل اختصاصی (هر وضعیت) — فقط وقتی اشتراک فعالی وجود
+   * نداشته باشد پر می‌شود؛ برای نمایش «منقضی‌شده + تاریخ پایان» استفاده
+   * می‌شود. وقتی اشتراک فعالی هست `null` است.
+   */
+  lastSubscription?: PublicPageSubscriptionStatus | null;
 }
 
 export interface PublicPageDiscountQuote {

@@ -6,6 +6,7 @@ import { FilesModule } from 'src/files/files.module';
 import { City } from 'src/locations/entities/city.entity';
 import { Province } from 'src/locations/entities/province.entity';
 import { NotificationModule } from 'src/notification/notification.module';
+import { SubscriptionModule } from 'src/subscription/subscription.module';
 import { User } from 'src/users/entities/user.entity';
 
 import { BarberAdminController } from './barber.admin.controller';
@@ -35,6 +36,7 @@ import { WorkHoursService } from './work-hours.service';
     ]),
     FilesModule,
     NotificationModule,
+    SubscriptionModule,
   ],
   controllers: [
     BarberController,

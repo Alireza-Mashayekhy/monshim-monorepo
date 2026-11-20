@@ -37,6 +37,7 @@ import {
   validatePublicPageSlug,
 } from '@/lib/public-page-slug';
 import { siteConfig } from '@/lib/site-config';
+import { remainingSubscriptionDays } from '@/lib/subscription';
 import { formatFaNumber, toPersianDigits } from '@/lib/utils';
 import { usePayPublicPage } from '@/services/features/payment/hooks';
 import {
@@ -106,7 +107,8 @@ export default function PublicPagePage() {
   const [slugDraft, setSlugDraft] = useState('');
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
-  const { data: statusData, isLoading } = useMyPublicPageStatus();
+  const { data: statusData, isLoading, isError, refetch } =
+    useMyPublicPageStatus();
   const { data: plansData, isLoading: isLoadingPlans } = usePublicPagePlans();
   const payPublicPage = usePayPublicPage();
   const updateSlug = useUpdatePublicPageSlug();
@@ -118,16 +120,13 @@ export default function PublicPagePage() {
   const currentSlug = status?.slug ?? null;
   const publicUrl = status?.publicUrl ?? '';
   const subscription = status?.subscription ?? null;
+  const lastSubscription = status?.lastSubscription ?? null;
   const nowMs = useSubscriptionNow() * SUBSCRIPTION_TICK_MS;
 
-  const subscriptionRemainingDays = subscription
-    ? Math.max(
-        0,
-        Math.ceil(
-          (new Date(subscription.endDate).getTime() - nowMs) / 86_400_000,
-        ),
-      )
-    : 0;
+  const subscriptionRemainingDays = remainingSubscriptionDays(
+    subscription?.endDate,
+    nowMs,
+  );
   /**
    * پلن‌های تمدید همیشه نمایش داده می‌شوند چون تنها مسیر فعال‌سازی همین
    * اشتراک است (چه صفحه فعال باشد تا تمدید، چه غیرفعال تا فعال‌سازی دوباره).
@@ -210,6 +209,40 @@ export default function PublicPagePage() {
         <div className="mt-4 space-y-4">
           <Skeleton className="h-40 w-full" />
           <Skeleton className="h-24 w-full" />
+        </div>
+      </DashboardShell>
+    );
+  }
+
+  // اگر خواندن وضعیت ناموفق بود، هرگز «فعال/غیرفعال» حدسی نمایش داده نمی‌شود؛
+  // آرایشگر یک خطای روشن با دکمهٔ تلاش دوباره می‌بیند.
+  if (isError || !status) {
+    return (
+      <DashboardShell>
+        <PageHeader title="صفحهٔ اختصاصی آرایشگاه" />
+        <div className="mt-4 space-y-4">
+          <AppCard>
+            <div className="flex items-start gap-3">
+              <AlertCircle size={22} className="mt-0.5 shrink-0 text-rose-600" />
+              <div>
+                <h2 className="text-base font-black text-gray-900">
+                  دریافت وضعیت صفحهٔ اختصاصی ناموفق بود
+                </h2>
+                <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                  وضعیت اشتراک و صفحهٔ اختصاصی شما از سرور خوانده نشد؛ برای جلوگیری
+                  از نمایش اطلاعات اشتباه، چیزی دربارهٔ فعال یا غیرفعال بودن صفحه
+                  نشان داده نمی‌شود. اتصال خود را بررسی کنید و دوباره تلاش کنید.
+                </p>
+                <Button
+                  className="mt-4 gap-1.5"
+                  size="sm"
+                  onClick={() => void refetch()}
+                >
+                  تلاش دوباره
+                </Button>
+              </div>
+            </div>
+          </AppCard>
         </div>
       </DashboardShell>
     );
@@ -483,6 +516,38 @@ export default function PublicPagePage() {
                 </div>
               )}
           </AppCard>
+
+          {/* اشتراک منقضی‌شده: تاریخ پایان واقعی را نشان دهیم، نه یک وضعیت خالی */}
+          {!isActive && lastSubscription && (
+            <AppCard>
+              <div className="flex items-start gap-3">
+                <TriangleAlert size={22} className="mt-0.5 shrink-0 text-amber-600" />
+                <div>
+                  <h2 className="text-base font-black text-gray-900">
+                    اشتراک صفحهٔ اختصاصی شما منقضی شده است
+                  </h2>
+                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                    اشتراک «{lastSubscription.planName}»
+                    {lastSubscription.isFreeTrial ? ' (دورهٔ رایگان)' : ''} در
+                    تاریخ{' '}
+                    {toPersianDigits(
+                      new Date(lastSubscription.endDate).toLocaleDateString(
+                        'fa-IR',
+                      ),
+                    )}{' '}
+                    پایان یافت. تا زمانی که اشتراک جدید فعال نشود، صفحهٔ اختصاصی
+                    شما در دسترس عموم نیست و در Providers و Sitemap نمایش داده
+                    نمی‌شود.
+                  </p>
+                  <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                    برای فعال‌سازی دوباره، یکی از پلن‌های زیر را انتخاب کنید؛
+                    اسلاگ، آدرس و همهٔ محتوای قبلی محفوظ است و چیزی از نو
+                    ساخته نمی‌شود.
+                  </p>
+                </div>
+              </div>
+            </AppCard>
+          )}
 
           {/* وضعیت اشتراک «پروفایل اختصاصی» (دورهٔ رایگان یا پلن تمدید پولی) */}
           {subscription && (

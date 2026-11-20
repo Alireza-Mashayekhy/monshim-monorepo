@@ -157,3 +157,25 @@ test('پاسخ خرابِ API باعث نمی‌شود sitemap خالی شود',
   assert.ok(urls.includes(siteConfig.url));
   assert.ok(urls.includes(`${siteConfig.url}/providers`));
 });
+
+test('هیچ URLتکراری در خروجی sitemap نیست (حتی اگر API تکراری بدهد)', async () => {
+  stubFetch({
+    directory: [...DIRECTORY, DIRECTORY[0]],
+    blog: [...ARTICLES, ARTICLES[0]],
+  });
+
+  const entries = await sitemap();
+  const urls = entries.map(entry => entry.url);
+  const unique = new Set(urls);
+
+  assert.equal(urls.length, unique.size, 'URL تکراری در sitemap وجود دارد');
+  assert.equal(
+    urls.filter(url => url === `${siteConfig.url}/provider/roya`).length,
+    1,
+  );
+  assert.equal(
+    urls.filter(url => url === `${siteConfig.url}/blog/beauty-salon-advertising`)
+      .length,
+    1,
+  );
+});

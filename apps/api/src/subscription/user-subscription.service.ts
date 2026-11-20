@@ -3,9 +3,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
+import { FrontendRevalidationService } from 'src/common/services/frontend-revalidation.service';
 import { isDuplicateEntryError } from 'src/common/utils/db-error.util';
 import {
   PUBLIC_PAGE_LEGACY_PLAN_KEY,
@@ -42,6 +44,11 @@ export class UserSubscriptionService {
     private readonly smsUsageRepo: Repository<SmsUsage>,
 
     private readonly subscriptionService: SubscriptionService,
+
+    // اختیاری تا تست‌های این سرویس بدون این وابستگی ساخته شوند و نبود آن
+    // رفتار اصلی (انقضا در دیتابیس) را متوقف نکند.
+    @Optional()
+    private readonly frontendRevalidationService?: FrontendRevalidationService,
   ) {}
 
   /**
@@ -53,17 +60,58 @@ export class UserSubscriptionService {
    */
   @Cron(CronExpression.EVERY_HOUR)
   async expireOverdueSubscriptions(): Promise<number> {
+    const now = new Date();
+
+    // شناسهٔ آرایشگرهایی که اشتراک «پروفایل اختصاصی»شان همین الان منقضی
+    // می‌شود، پیش از آپدیت انبوه خوانده می‌شود تا بتوان کش صفحهٔ عمومی و
+    // sitemap در فرانت را پاک کرد؛ بدون این، صفحه/اسلاگِ کاربرِ منقضی‌شده
+    // تا پایان بازهٔ کش فرانت (۵ دقیقه) هم در Providers دیده می‌شد و هم
+    // sitemap آن را اعلام می‌کرد (پذیرش/خروج از شمول باید همان لحظه باشد).
+    // فقط پلن‌های public_page اطلاع‌رسانی می‌شوند؛ انقضای پیامکی ربطی به
+    // کش عمومی ندارد. فراخوانی webhook عمداً fire-and-forget است تا کندی
+    // یا خطای فرانت، انقضای دیتابیس را متوقف نکند.
+    const expiringPublicPageUsers = await this.userSubscriptionRepo
+      .createQueryBuilder('subscription')
+      .innerJoin('subscription.subscriptionPlan', 'plan')
+      .select('DISTINCT subscription.userId', 'userId')
+      .where('subscription.status = :status', {
+        status: UserSubscriptionStatus.ACTIVE,
+      })
+      .andWhere('subscription.endDate < :now', { now })
+      .andWhere('plan.planType = :planType', {
+        planType: PUBLIC_PAGE_PLAN_TYPE,
+      })
+      .getRawMany<{ userId: string | number }>()
+      .catch((error: unknown) => {
+        // اگر خواندن این فهرست خطا بدهد، انقضای اصلی همچنان اجرا می‌شود؛
+        // فقط کش فرانت دیرتر (با بازهٔ زمانی) تازه می‌شود.
+        this.logger.warn(
+          `خواندن فهرست اشتراک‌های منقضی‌شدهٔ پروفایل اختصاصی ناموفق بود: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return [] as Array<{ userId: string | number }>;
+      });
+
     const result = await this.userSubscriptionRepo
       .createQueryBuilder()
       .update(UserSubscription)
       .set({ status: UserSubscriptionStatus.EXPIRED })
       .where('status = :status', { status: UserSubscriptionStatus.ACTIVE })
-      .andWhere('end_date < :now', { now: new Date() })
+      .andWhere('end_date < :now', { now })
       .execute();
 
     const affected = result.affected ?? 0;
     if (affected > 0) {
       this.logger.log(`${affected} اشتراک منقضی‌شده به‌صورت خودکار بسته شد`);
+    }
+
+    for (const row of expiringPublicPageUsers) {
+      const userId = Number(row.userId);
+      if (!Number.isInteger(userId) || userId < 1) continue;
+      // اسلاگ معلوم نیست؛ پاک‌سازی با userId + تگ مشترک `public-api-data`
+      // همهٔ صفحهٔ عمومی/فهرست/sitemap را پوشش می‌دهد.
+      this.frontendRevalidationService?.notifyBarberProfileChanged({ userId });
     }
 
     return affected;
@@ -125,6 +173,30 @@ export class UserSubscriptionService {
       })
       .andWhere('subscription.startDate <= :now', { now })
       .andWhere('subscription.endDate > :now', { now })
+      .getMany();
+  }
+
+  /**
+   * همهٔ اشتراک‌های «پروفایل اختصاصی» یک فهرست کاربران (هر وضعیت و هر دوره)،
+   * به تفکیک جدیدترین اول.
+   *
+   * تفاوت با `findActivePublicPageSubscriptionsForUsers`: آن یکی فقط اشتراکِ
+   * فعالِ در بازه را می‌دهد (برای Providers/Sitemap کافی است)، اما داشبورد
+   * آرایشگر و پنل مدیریت باید «آخرین اشتراک حتی اگر منقضی شده» را هم ببینند
+   * تا وضعیت غیرفعال را با تاریخ پایان و پلن نمایش دهند، نه با یک Badge خالی.
+   * `summarizePublicPageSubscriptionsByUser` روی این خروجی اعمال می‌شود.
+   */
+  async findPublicPageSubscriptionsForUsers(userIds: number[]) {
+    if (userIds.length === 0) return [];
+
+    return this.userSubscriptionRepo
+      .createQueryBuilder('subscription')
+      .innerJoinAndSelect('subscription.subscriptionPlan', 'plan')
+      .where('subscription.userId IN (:...userIds)', { userIds })
+      .andWhere('plan.planType = :planType', {
+        planType: PUBLIC_PAGE_PLAN_TYPE,
+      })
+      .orderBy('subscription.endDate', 'DESC')
       .getMany();
   }
 
