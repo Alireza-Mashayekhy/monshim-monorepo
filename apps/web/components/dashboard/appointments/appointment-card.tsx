@@ -20,6 +20,7 @@ import {
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import { CallButton } from '@/components/shared/call-button';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -171,11 +172,28 @@ export default function AppointmentCard({ booking }: AppointmentCardProps) {
               </Badge>
             </div>
 
-            <p className="mt-1 text-[11px] font-medium text-gray-400" dir="ltr">
-              {customer?.phone
-                ? toPersianDigits(customer.phone)
-                : 'بدون شماره تماس'}
-            </p>
+            {/*
+              شمارهٔ مشتری و دکمهٔ تماس همیشه نمایش داده می‌شوند — حتی برای
+              نوبت‌های لغو‌شده/رد‌شده؛ چون آرایشگر ممکن است برای هماهنگی یا
+              پیگیری با مشتری تماس بگیرد.
+            */}
+            <div className="mt-1 flex items-center gap-1">
+              <p
+                className="text-[11px] font-medium text-gray-400"
+                dir={customer?.phone ? 'ltr' : 'rtl'}
+              >
+                {customer?.phone
+                  ? toPersianDigits(customer.phone)
+                  : 'بدون شماره تماس'}
+              </p>
+
+              <CallButton
+                phone={customer?.phone}
+                size="icon-xs"
+                variant="ghost"
+                className="rounded-full text-primary hover:bg-primary-2"
+              />
+            </div>
           </div>
 
           <div className="text-left">

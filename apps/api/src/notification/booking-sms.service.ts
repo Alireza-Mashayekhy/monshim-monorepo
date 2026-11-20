@@ -19,6 +19,7 @@ import {
   depositPaidBarberParams,
   DepositPaidCustomerParams,
   depositPaidCustomerParams,
+  publicPageExpiringReminderParams,
   publicPageFreeTrialParams,
   SMS_TEMPLATES,
   WithdrawalPaidParams,
@@ -245,18 +246,48 @@ export class BookingSmsService {
   }
 
   /**
+   * ⏳ یادآوری «۷ روز مانده به پایان اشتراک صفحهٔ اختصاصی» (قالب ۹۲۵۸۰۶).
+   *
+   * توسط کرون `PublicPageExpiryReminderService` برای اشتراک‌های
+   * `public_page` که تا کمتر از ۷ روز دیگر منقضی می‌شوند فراخوانی می‌شود.
+   * شناسهٔ قالب از `SMS_IR_TEMPLATE_PUBLIC_PAGE_EXPIRING` خوانده می‌شود و
+   * اگر تنظیم نشده باشد مقدار پیش‌فرض `SMS_TEMPLATES.PUBLIC_PAGE_EXPIRING_REMINDER`
+   * استفاده می‌شود.
+   */
+  async sendPublicPageExpiringReminderToBarber(
+    barberPhone: string,
+    params: { barberName?: string },
+  ): Promise<boolean> {
+    const templateId =
+      this.configService.get<number>('SMS_IR_TEMPLATE_PUBLIC_PAGE_EXPIRING') ||
+      SMS_TEMPLATES.PUBLIC_PAGE_EXPIRING_REMINDER;
+
+    return this.safeSend(
+      barberPhone,
+      templateId,
+      publicPageExpiringReminderParams(params),
+      'یادآوری پایان اشتراک صفحهٔ اختصاصی به آرایشگر',
+    );
+  }
+
+  /**
    * ارسال امن: خطای پیامک هرگز به جریان اصلی نوبت منتقل نمی‌شود
+   *
+   * خروجی `true` یعنی ارسال واقعاً موفق بوده است؛ `false` یعنی شماره خالی
+   * بود، سرویس تنظیم نشده بود یا خطا رخ داد. فراخوان‌هایی که باید بدانند
+   * پیامک رفته یا نه (مثل یادآوری انقضای اشتراک) از این مقدار استفاده
+   * می‌کنند تا در صورت شکست، دوباره تلاش کنند.
    */
   private async safeSend(
     mobile: string,
     templateId: number,
     parameters: { name: string; value: string }[],
     label: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!mobile) {
       this.logger.warn(`${label}: شماره گیرنده خالی است`);
 
-      return;
+      return false;
     }
 
     try {
@@ -271,10 +302,14 @@ export class BookingSmsService {
           `${label} ارسال شد (messageId=${result.messageId}) به ${mobile}`,
         );
       }
+
+      return Boolean(result);
     } catch (error: any) {
       this.logger.error(
         `خطا در ارسال ${label} به ${mobile}: ${error?.message ?? String(error)}`,
       );
+
+      return false;
     }
   }
 }

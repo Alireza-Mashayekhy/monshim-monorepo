@@ -85,6 +85,21 @@ export class UserSubscription {
   })
   freeTrialSmsSentAt: Date | null;
 
+  /**
+   * زمان ارسال پیامک «۷ روز مانده به پایان اشتراک» (قالب ۹۲۵۸۰۶).
+   *
+   * کلید idempotency: کرونِ یادآوری فقط وقتی این فیلد `NULL` است پیامک
+   * می‌فرستد و بلافاصله پرش می‌کند؛ پس یک اشتراک هرگز چند پیامک یادآوری
+   * نمی‌گیرد — حتی اگر چند نمونه از سرور یا چند اجرای هم‌زمان کرون باشد.
+   * اگر ارسال شکست بخورد، مقدار دوباره `NULL` می‌شود تا اجرای بعدی تلاش کند.
+   */
+  @Column({
+    name: 'expiry_reminder_sms_sent_at',
+    type: 'datetime',
+    nullable: true,
+  })
+  expiryReminderSmsSentAt: Date | null;
+
   @CreateDateColumn({
     name: 'created_at',
   })

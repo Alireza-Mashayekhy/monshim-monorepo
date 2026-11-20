@@ -1,9 +1,10 @@
 'use client';
 
-import { ChevronLeft, X } from 'lucide-react';
+import { ChevronLeft, LogOut, X } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { toast } from 'sonner';
 
 import {
   Drawer,
@@ -12,7 +13,9 @@ import {
   DrawerDescription,
   DrawerTitle,
 } from '@/components/ui/drawer';
+import { getApiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
+import { useLogout } from '@/services/features/auth/hooks';
 
 import { isRouteActive, moreMenuGroups, type MoreMenuItem } from './routes';
 
@@ -32,6 +35,28 @@ interface Props {
  */
 export default function MoreMenu({ open, onOpenChange }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
+  const logoutMutation = useLogout();
+
+  /**
+   * خروج از حساب — همان مسیر صفحهٔ پروفایل و سایدبار ادمین:
+   * پاک‌سازی نشست، سپس رفتن به صفحهٔ ورود.
+   */
+  const handleLogout = async () => {
+    if (logoutMutation.isPending) return;
+
+    onOpenChange(false);
+
+    try {
+      await logoutMutation.mutateAsync();
+      router.replace('/login');
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        getApiErrorMessage(error, 'خروج انجام نشد. دوباره تلاش کنید.'),
+      );
+    }
+  };
 
   // در دسکتاپ نوار پایین وجود ندارد (سایدبار همهٔ مسیرها را دارد)؛ اگر صفحه
   // با شیتِ باز بزرگ شد، شیت را می‌بندیم تا بدون دکمهٔ مرجع روی صفحه نماند.
@@ -110,6 +135,45 @@ export default function MoreMenu({ open, onOpenChange }: Props) {
               </section>
             );
           })}
+
+          {/*
+            خروج از حساب — انتهای شیت، جدا از گروه‌های ناوبری.
+            چون مقصد نیست (عمل است) از `moreMenuGroups` بیرون است و به
+            `dashboardRoutes`/سایدبار دسکتاپ دست نمی‌زند.
+          */}
+          <section aria-labelledby="more-menu-logout" className="mt-4">
+            <h3
+              id="more-menu-logout"
+              className="px-3 pb-1.5 text-xs font-medium text-slate-400"
+            >
+              حساب
+            </h3>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={logoutMutation.isPending}
+              className={cn(
+                'group flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 py-2 text-right outline-none',
+                'transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-primary/50',
+                'hover:bg-red-50 active:bg-red-100 disabled:opacity-60',
+              )}
+            >
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600 transition-colors duration-150 group-hover:bg-white group-hover:ring-1 group-hover:ring-red-200">
+                <LogOut size={20} strokeWidth={2} aria-hidden />
+              </span>
+
+              <span className="min-w-0 flex-1 text-right">
+                <span className="block truncate text-sm font-semibold text-red-600">
+                  {logoutMutation.isPending ? 'در حال خروج…' : 'خروج از حساب'}
+                </span>
+
+                <span className="mt-0.5 block truncate text-xs text-slate-500">
+                  پایان دادن به نشست فعلی
+                </span>
+              </span>
+            </button>
+          </section>
         </nav>
       </DrawerContent>
     </Drawer>

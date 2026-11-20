@@ -14,6 +14,7 @@ import {
   SubscriptionPlanType,
 } from 'src/subscription/constants';
 import { SubscriptionPlan } from 'src/subscription/entities/subscription-plan.entity';
+import { User } from 'src/users/entities/user.entity';
 import { EntityManager, Repository } from 'typeorm';
 
 import { SmsUsage } from './entities/sms-usage.entity';
@@ -253,6 +254,107 @@ export class UserSubscriptionService {
     );
 
     return { subscription: saved, created: true };
+  }
+
+  /**
+   * تکمیل دورهٔ رایگان برای آرایشگرهایی که **قبل از** افزوده‌شدن این امکان
+   * ثبت‌نام کرده‌اند.
+   *
+   * چرا لازم است؟
+   * -------------
+   * `grantFreePublicPageTrial` فقط در مسیر `registerBarber` صدا زده می‌شود؛
+   * پس هر آرایشگری که پیش از استقرار این قابلیت ثبت‌نام کرده بود، هیچ ردیف
+   * اشتراکی ندارد و صفحهٔ اختصاصی‌اش (با وجود اینکه شرط «یک ماه رایگان برای
+   * هر ثبت‌نام» درباره‌اش صادق است) غیرفعال می‌ماند.
+   *
+   * این متد همان قاعده را برای کاربرانِ موجود اعمال می‌کند و کاملاً idempotent
+   * است، چون از خودِ `grantFreePublicPageTrial` استفاده می‌کند که اگر کاربر
+   * **هر** اشتراک `public_page` داشته باشد (رایگان، پولی یا مهلت انتقالی)
+   * چیزی نمی‌سازد. پس اجرای مکرر (هر بوت) هیچ اشتراک تکراری یا تمدید ناخواسته
+   * ایجاد نمی‌کند و پرداخت‌ها/مهلت‌های موجود دست‌نخورده می‌مانند.
+   *
+   * فقط کاربرانی بررسی می‌شوند که:
+   *   • نقش `barber` دارند (آرایشگر واقعی، نه مشتری/ادمین)؛
+   *   • پروفایل آرایشگر دارند؛
+   *   • هنوز هیچ اشتراکی از نوع `public_page` ندارند.
+   *
+   * `dryRun` فقط می‌شمارد و چیزی نمی‌نویسد (برای بررسیِ پیش از اجرا).
+   */
+  async backfillFreePublicPageTrialForExistingBarbers(options?: {
+    dryRun?: boolean;
+  }): Promise<{
+    candidates: number;
+    granted: number;
+    failed: number;
+    dryRun: boolean;
+  }> {
+    const dryRun = Boolean(options?.dryRun);
+
+    /**
+     * کاربرانِ واجد شرایط: آرایشگر با پروفایل، که هیچ اشتراکِ `public_page`
+     * ندارند. شرط آخر در SQL اعمال می‌شود (نه در حافظه) تا با تعداد زیاد
+     * کاربران هم یک کوئری بماند.
+     */
+    const rows = await this.userSubscriptionRepo.manager
+      .createQueryBuilder(User, 'user')
+      .innerJoin('user.barberProfile', 'profile')
+      .where('user.roles LIKE :roleLower OR user.roles LIKE :roleUpper', {
+        roleLower: '%barber%',
+        roleUpper: '%Barber%',
+      })
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1
+          FROM user_subscriptions subscription
+          INNER JOIN subscription_plans plan
+            ON plan.id = subscription.subscription_plan_id
+          WHERE subscription.user_id = user.id
+            AND plan.plan_type = :planType
+        )`,
+        { planType: PUBLIC_PAGE_PLAN_TYPE },
+      )
+      .select('user.id', 'id')
+      .getRawMany<{ id: number }>();
+
+    const candidates = rows
+      .map(row => Number(row.id))
+      .filter(id => Number.isInteger(id) && id > 0);
+
+    if (dryRun || candidates.length === 0) {
+      return { candidates: candidates.length, granted: 0, failed: 0, dryRun };
+    }
+
+    let granted = 0;
+    let failed = 0;
+
+    for (const [index, userId] of candidates.entries()) {
+      const result = await this.grantFreePublicPageTrial(userId);
+
+      if (result === null) {
+        // پلن دورهٔ رایگان seed نشده؛ ادامه‌دادن فقط لاگ تکراری تولید می‌کند.
+        failed = candidates.length - index;
+        break;
+      }
+
+      if (result.created) granted += 1;
+    }
+
+    if (granted > 0) {
+      this.logger.log(
+        `دورهٔ رایگان یک‌ماههٔ پروفایل اختصاصی برای ${granted} آرایشگرِ ` +
+          'ثبت‌نام‌کردهٔ قبلی فعال شد',
+      );
+    }
+
+    if (failed > 0) {
+      this.logger.warn(
+        'پلن دورهٔ رایگان پروفایل اختصاصی یافت نشد؛ تکمیل آرایشگرهای قبلی ' +
+          'انجام نشد. پلن‌ها را seed کنید (ENABLE_STARTUP_DATA_TASKS) و ' +
+          'بک‌اند را دوباره بالا بیاورید.',
+      );
+    }
+
+    return { candidates: candidates.length, granted, failed, dryRun };
   }
 
   /**

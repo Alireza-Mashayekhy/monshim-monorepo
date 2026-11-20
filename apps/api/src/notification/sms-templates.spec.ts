@@ -10,6 +10,8 @@ import {
   depositLinkParams,
   depositPaidBarberParams,
   depositPaidCustomerParams,
+  PUBLIC_PAGE_EXPIRING_REMINDER_DAYS,
+  publicPageExpiringReminderParams,
   publicPageFreeTrialParams,
   SMS_TEMPLATES,
   withdrawalPaidParams,
@@ -218,5 +220,26 @@ describe('clipForSms', () => {
 
   it('مقدار داخل سقف را تغییر نمی‌دهد', () => {
     expect(clipForSms('سالن رز')).toBe('سالن رز');
+  });
+
+  it('پارامتر NAME پیامک «۷ روز مانده به پایان اشتراک» (925806) را می‌سازد', () => {
+    expect(SMS_TEMPLATES.PUBLIC_PAGE_EXPIRING_REMINDER).toBe(925806);
+    expect(PUBLIC_PAGE_EXPIRING_REMINDER_DAYS).toBe(7);
+
+    expect(
+      publicPageExpiringReminderParams({ barberName: 'علی رضایی' }),
+    ).toEqual([{ name: 'NAME', value: 'علی رضایی' }]);
+
+    // نام خالی → مقدار پیش‌فرض تا قالب خالی نماند
+    expect(publicPageExpiringReminderParams({})).toEqual([
+      { name: 'NAME', value: 'آرایشگر' },
+    ]);
+
+    // نام طولانی تا سقف ۲۵ کاراکتر SMS.ir کوتاه می‌شود
+    const clipped = publicPageExpiringReminderParams({
+      barberName: 'سید محمدحسین طباطبایی بزرگمهر تهرانی',
+    });
+    expectAllParamsWithinLimit(clipped);
+    expect(clipped[0].value).toHaveLength(MAX);
   });
 });

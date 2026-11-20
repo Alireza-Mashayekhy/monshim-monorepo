@@ -14,10 +14,11 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import Link from 'next/link';
-import { FormEvent, useState,useSyncExternalStore } from 'react';
+import { FormEvent, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 
 import DashboardShell from '@/components/dashboard/layout/dashboard-shell';
+import { PublicPageExplainer } from '@/components/dashboard/public-page/public-page-explainer';
 import AppCard from '@/components/shared/app-card';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import FadeIn from '@/components/shared/fade-in';
@@ -46,6 +47,14 @@ import {
 } from '@/services/features/public-page/hooks';
 
 const URL_HOST_PREFIX = `${siteConfig.url.replace(/^https?:\/\//, '')}/provider/`;
+
+/**
+ * آستانهٔ هشدار «اشتراک در حال پایان است» — باید با
+ * `PUBLIC_PAGE_EXPIRING_REMINDER_DAYS` در بک‌اند
+ * (`apps/api/src/notification/sms-templates.ts`) یکی باشد، چون همان عدد
+ * متن پیامک «۷ روز مانده» (قالب ۹۲۵۸۰۶) را تعیین می‌کند.
+ */
+const EXPIRY_WARNING_DAYS = 7;
 
 const SUBSCRIPTION_TICK_MS = 60_000;
 let subscriptionNowTick = Math.floor(Date.now() / SUBSCRIPTION_TICK_MS);
@@ -178,9 +187,13 @@ export default function PublicPagePage() {
       const response = await updateSlug.mutateAsync(localValidation.slug);
       const savedSlug = response.data?.slug ?? localValidation.slug;
       // لحظه‌ای که صفحه برای اولین بار واقعاً قابل مشاهده می‌شود = انتشار.
-      trackEventOnce(`profile-published:${savedSlug}`, 'provider_profile_published', {
-        activation: 'subscription',
-      });
+      trackEventOnce(
+        `profile-published:${savedSlug}`,
+        'provider_profile_published',
+        {
+          activation: 'subscription',
+        },
+      );
       void revalidateMyPublicBarberPage([currentSlug, savedSlug]);
       setSlugDraft('');
       toast.success('آدرس اختصاصی شما ثبت شد و از این پس قابل تغییر نیست');
@@ -208,6 +221,16 @@ export default function PublicPagePage() {
 
       <FadeIn>
         <div className="mt-4 space-y-4">
+          {/*
+            توضیح کامل «صفحهٔ اختصاصی چیست و چه خواصی دارد».
+            پیش‌تر فقط یک جملهٔ کوتاه بالای پلن‌ها بود و آرایشگر درک روشنی از
+            ارزش این صفحه و تفاوت پلن‌ها نداشت.
+          */}
+          <PublicPageExplainer
+            publicUrl={publicUrl || undefined}
+            isActive={isActive}
+          />
+
           <AppCard>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -427,8 +450,8 @@ export default function PublicPagePage() {
 
             {status?.reason === 'SUBSCRIPTION' && subscription && (
               <p className="mt-3 text-xs text-muted-foreground">
-                پروفایل اختصاصی شما با اشتراک «{subscription.planName}» فعال
-                است و تا{' '}
+                پروفایل اختصاصی شما با اشتراک «{subscription.planName}» فعال است
+                و تا{' '}
                 {toPersianDigits(
                   new Date(subscription.endDate).toLocaleDateString('fa-IR'),
                 )}{' '}
@@ -436,6 +459,29 @@ export default function PublicPagePage() {
                 دارد.
               </p>
             )}
+
+            {/*
+              همان هشدار پیامک «۷ روز مانده» — این‌جا هم دیده می‌شود تا اگر
+              آرایشگر پیامک را ندید، از داشبورد هم متوجه شود. آستانه از همان
+              مقدار بک‌اند (`PUBLIC_PAGE_EXPIRING_REMINDER_DAYS = 7`) می‌آید.
+            */}
+            {isActive &&
+              subscription &&
+              subscriptionRemainingDays > 0 &&
+              subscriptionRemainingDays <= EXPIRY_WARNING_DAYS && (
+                <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-xs leading-6 text-amber-900">
+                  <TriangleAlert size={15} className="mt-0.5 shrink-0" />
+                  <span>
+                    <strong className="font-black">
+                      فقط {toPersianDigits(subscriptionRemainingDays)} روز به
+                      پایان اشتراک صفحهٔ اختصاصی مانده است.
+                    </strong>{' '}
+                    با پایان اعتبار، صفحه از دسترس عموم خارج می‌شود و آسیب به
+                    سئوی صفحه وارد می‌شود. برای تمدید، از پلن‌های پایین صفحه
+                    استفاده کنید.
+                  </span>
+                </div>
+              )}
           </AppCard>
 
           {/* وضعیت اشتراک «پروفایل اختصاصی» (دورهٔ رایگان یا پلن تمدید پولی) */}
@@ -474,7 +520,9 @@ export default function PublicPagePage() {
                   <dt className="text-muted-foreground">تاریخ پایان</dt>
                   <dd className="font-bold text-gray-900">
                     {toPersianDigits(
-                      new Date(subscription.endDate).toLocaleDateString('fa-IR'),
+                      new Date(subscription.endDate).toLocaleDateString(
+                        'fa-IR',
+                      ),
                     )}
                   </dd>
                 </div>
@@ -488,8 +536,8 @@ export default function PublicPagePage() {
 
               <p className="mt-3 rounded-2xl border border-primary/20 bg-primary-2/40 p-3 text-xs leading-6 text-muted-foreground">
                 در پایان این دوره، صفحهٔ اختصاصی شما غیرفعال می‌شود. با تمدید
-                اشتراک، مدت اعتبار به زمان باقی‌مانده اضافه می‌شود و چیزی از
-                دست نمی‌رود.
+                اشتراک، مدت اعتبار به زمان باقی‌مانده اضافه می‌شود و چیزی از دست
+                نمی‌رود.
               </p>
             </AppCard>
           )}
@@ -498,13 +546,35 @@ export default function PublicPagePage() {
           {showRenewalPlans && (
             <AppCard>
               <h2 className="text-base font-black text-gray-900">
-                تمدید اشتراک پروفایل اختصاصی
+                {isActive
+                  ? 'تمدید اشتراک پروفایل اختصاصی'
+                  : 'فعال‌سازی اشتراک پروفایل اختصاصی'}
               </h2>
+
               <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                یکی از پلن‌های زیر را انتخاب کنید. قیمت‌ها به‌صورت قطعی از
-                سامانه دریافت می‌شوند و پس از پرداخت موفق، مدت اعتبار شما به
-                زمان باقی‌مانده اضافه می‌شود.
+                {isActive
+                  ? 'برای اینکه صفحه‌تان بدون وقفه در دسترس بماند، یکی از پلن‌های زیر را انتخاب کنید. قیمت‌ها به‌صورت قطعی از سامانه خوانده می‌شوند و پس از پرداخت موفق، مدت اعتبار به زمان باقی‌ماندهٔ شما «اضافه» می‌شود (نه اینکه از نو شروع شود)؛ پس با تمدید زودهنگام چیزی از دست نمی‌دهید.'
+                  : 'صفحهٔ اختصاصی شما در حال حاضر غیرفعال است و مشتری‌ها آن را نمی‌بینند. با انتخاب یکی از پلن‌های زیر، صفحه بلافاصله فعال می‌شود؛ اسلاگ، آدرس و همهٔ محتوای قبلی محفوظ است و نیازی به ساختن صفحه از نو نیست.'}
               </p>
+
+              <ul className="mt-3 grid gap-1.5 text-[11px] leading-6 text-muted-foreground sm:grid-cols-2">
+                <li className="flex items-start gap-1.5">
+                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
+                  پرداخت یک‌باره، بدون تمدید خودکار و بدون کسر ماهانه
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
+                  آدرس و اسلاگ ثبت‌شده در گوگل دست‌نخورده می‌ماند
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
+                  همهٔ امتیازها، نظرات و نمونه‌کارها حفظ می‌شود
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
+                  با پایان اعتبار، خرید خودکار انجام نمی‌شود
+                </li>
+              </ul>
 
               {isLoadingPlans ? (
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -549,7 +619,6 @@ export default function PublicPagePage() {
               )}
             </AppCard>
           )}
-
         </div>
       </FadeIn>
     </DashboardShell>

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import AppCard from '@/components/shared/app-card';
+import { CallButton } from '@/components/shared/call-button';
 import CustomPagination from '@/components/shared/custom-pagination';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -129,7 +130,16 @@ export function ClubCustomersList({
                   </div>
                 </TableCell>
                 <TableCell dir="ltr" className="text-right">
-                  {customer.phone}
+                  <div className="flex items-center gap-1">
+                    <span className="tabular-nums">{customer.phone}</span>
+
+                    <CallButton
+                      phone={customer.phone}
+                      size="icon-sm"
+                      variant="ghost"
+                      className="rounded-full text-primary hover:bg-primary-2"
+                    />
+                  </div>
                 </TableCell>
                 <TableCell>
                   <Badge
@@ -202,6 +212,13 @@ export function ClubCustomersList({
                 >
                   <Phone size={12} />
                   {customer.phone}
+
+                  <CallButton
+                    phone={customer.phone}
+                    size="icon-sm"
+                    variant="ghost"
+                    className="rounded-full text-primary hover:bg-primary-2"
+                  />
                 </p>
                 <Badge
                   variant="outline"
