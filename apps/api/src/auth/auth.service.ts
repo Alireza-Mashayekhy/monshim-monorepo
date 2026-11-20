@@ -585,6 +585,7 @@ export class AuthService {
 
         return this.bookingSmsService?.sendPublicPageFreeTrialToBarber?.(
           user.phone,
+          { barberName: user.fullName },
         );
       })
       .catch(error => {

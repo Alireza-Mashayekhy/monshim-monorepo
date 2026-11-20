@@ -220,14 +220,18 @@ export class BookingSmsService {
   }
 
   /**
-   * 🎁 فعال‌شدن دورهٔ رایگان یک‌ماههٔ پروفایل اختصاصی — پیامک به آرایشگر.
+   * 🎁 فعال‌شدن دورهٔ رایگان یک‌ماههٔ «پروفایل اختصاصی» — پیامک به آرایشگر.
    *
-   * فقط پس از ثبت‌نام موفق و اعطای دورهٔ رایگان از مسیر ثبت‌نام آرایشگر
-   * صدا زده می‌شود. شناسهٔ قالب از `SMS_IR_TEMPLATE_PUBLIC_PAGE_TRIAL`
-   * خوانده می‌شود و اگر تنظیم نشده باشد مقدار پیش‌فرض
+   * فقط پس از ثبت‌نام موفق و اعطای دورهٔ رایگان **پروفایل اختصاصی** (صفحهٔ
+   * عمومی آرایشگاه) از مسیر ثبت‌نام آرایشگر صدا زده می‌شود. قالب ۴۱۵۸۰۸
+   * (#NAME#). شناسهٔ قالب از `SMS_IR_TEMPLATE_PUBLIC_PAGE_TRIAL` خوانده
+   * می‌شود و اگر تنظیم نشده باشد مقدار پیش‌فرض
    * `SMS_TEMPLATES.PUBLIC_PAGE_FREE_TRIAL` استفاده می‌شود.
    */
-  async sendPublicPageFreeTrialToBarber(barberPhone: string): Promise<void> {
+  async sendPublicPageFreeTrialToBarber(
+    barberPhone: string,
+    params: { barberName?: string },
+  ): Promise<void> {
     const templateId =
       this.configService.get<number>('SMS_IR_TEMPLATE_PUBLIC_PAGE_TRIAL') ||
       SMS_TEMPLATES.PUBLIC_PAGE_FREE_TRIAL;
@@ -235,7 +239,7 @@ export class BookingSmsService {
     await this.safeSend(
       barberPhone,
       templateId,
-      publicPageFreeTrialParams(),
+      publicPageFreeTrialParams(params),
       'فعال‌شدن دورهٔ رایگان پروفایل اختصاصی به آرایشگر',
     );
   }

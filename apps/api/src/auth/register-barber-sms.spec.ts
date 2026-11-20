@@ -160,7 +160,9 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
     ).toHaveBeenCalledTimes(1);
     expect(
       bookingSmsService.sendPublicPageFreeTrialToBarber,
-    ).toHaveBeenCalledWith('09121234567');
+    ).toHaveBeenCalledWith('09121234567', {
+      barberName: dto.fullName,
+    });
   });
 
   it('اگر دورهٔ رایگان تازه اعطا نشده باشد (کاربر تکراری)، پیامک رایگان ارسال نمی‌شود', async () => {
