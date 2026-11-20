@@ -1,3 +1,8 @@
+jest.mock('@nestjs/schedule', () => ({
+  Cron: () => () => undefined,
+  CronExpression: new Proxy({}, { get: () => '0 * * * *' }),
+}));
+
 import { AuthService } from 'src/auth/auth.service';
 import { Role } from 'src/common/enum/role.enum';
 
@@ -268,9 +273,14 @@ describe('BaleNotificationService', () => {
         { create: jest.fn().mockResolvedValue({ id: 'bp-77' }) } as any,
         { create: jest.fn().mockResolvedValue({ id: 'svc-1' }) } as any,
         { createReferral: jest.fn() } as any,
+        {
+          grantFreePublicPageTrial: jest.fn().mockResolvedValue(null),
+          claimFreeTrialSms: jest.fn().mockResolvedValue(false),
+        } as any,
         { transaction: transactionMock } as any,
         {} as any, // session revocation is not used during registration
         { notifyBarberRegistered } as any,
+        {} as any, // bookingSmsService در این تست استفاده نمی‌شود
       );
 
       const mockRes = { cookie: jest.fn() } as any;

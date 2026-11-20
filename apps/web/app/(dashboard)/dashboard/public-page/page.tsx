@@ -11,12 +11,10 @@ import {
   Link2,
   Loader2,
   Lock,
-  Sparkles,
-  Tag,
   TriangleAlert,
 } from 'lucide-react';
 import Link from 'next/link';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useState,useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 
 import DashboardShell from '@/components/dashboard/layout/dashboard-shell';
@@ -43,20 +41,53 @@ import { usePayPublicPage } from '@/services/features/payment/hooks';
 import {
   useCheckPublicPageSlug,
   useMyPublicPageStatus,
-  useQuotePublicPageDiscount,
+  usePublicPagePlans,
   useUpdatePublicPageSlug,
 } from '@/services/features/public-page/hooks';
 
 const URL_HOST_PREFIX = `${siteConfig.url.replace(/^https?:\/\//, '')}/provider/`;
 
+const SUBSCRIPTION_TICK_MS = 60_000;
+let subscriptionNowTick = Math.floor(Date.now() / SUBSCRIPTION_TICK_MS);
+
+function subscribeSubscriptionNow(onChange: () => void) {
+  const id = setInterval(() => {
+    subscriptionNowTick = Math.floor(Date.now() / SUBSCRIPTION_TICK_MS);
+    onChange();
+  }, SUBSCRIPTION_TICK_MS);
+
+  return () => clearInterval(id);
+}
+
+function getSubscriptionNowSnapshot() {
+  return subscriptionNowTick;
+}
+
+function getSubscriptionNowServerSnapshot() {
+  return subscriptionNowTick;
+}
+
+/**
+ * «اکنون» برای محاسبهٔ اعتبار باقی‌ماندهٔ اشتراک.
+ *
+ * مثل `useNow` صفحهٔ اشتراک: `useSyncExternalStore` با یک تیک دقیقه‌ای تا
+ * رندر سمت سرور و کلاینت یکی بماند و مقدار فقط هر دقیقه به‌روز شود.
+ */
+function useSubscriptionNow() {
+  return useSyncExternalStore(
+    subscribeSubscriptionNow,
+    getSubscriptionNowSnapshot,
+    getSubscriptionNowServerSnapshot,
+  );
+}
+
 /**
  * صفحهٔ اختصاصی (عمومی) آرایشگاه در داشبورد.
  *
- * صفحهٔ عمومی با آدرس `/provider/[slug]` وقتی فعال می‌شود که یکی از این دو شرط
- * برقرار باشد:
- *   • خرید یک‌بارهٔ پکیج ۷۷۳ هزار تومانی؛
- *   • یا ثبت ۳۰۰ رزرو موفق که پرداخت آن‌ها در درگاه انجام شده و لغو نشده باشند
- *     (مشابه بخش امور مالی).
+ * صفحهٔ عمومی با آدرس `/provider/[slug]` فقط با اشتراک فعال «پروفایل
+ * اختصاصی» فعال می‌شود (دورهٔ رایگان پس از ثبت‌نام، مهلت انتقالی خریداران
+ * قبلی یا پلن تمدید پولی). مسیرهای دائمی قبلی (خرید یک‌بارهٔ پکیج و حد نصاب
+ * رزرو) حذف شده‌اند.
  *
  * پس از فعال‌سازی، آرایشگر باید یک اسلاگ یکتا انتخاب کند تا به‌جای شناسهٔ عددی
  * در آدرس عمومی سالن نمایش داده شود.
@@ -65,25 +96,34 @@ export default function PublicPagePage() {
   const [copied, setCopied] = useState(false);
   const [slugDraft, setSlugDraft] = useState('');
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const [discountCode, setDiscountCode] = useState('');
 
   const { data: statusData, isLoading } = useMyPublicPageStatus();
+  const { data: plansData, isLoading: isLoadingPlans } = usePublicPagePlans();
   const payPublicPage = usePayPublicPage();
-  const quoteDiscount = useQuotePublicPageDiscount();
-  const appliedDiscount = quoteDiscount.data?.data;
   const updateSlug = useUpdatePublicPageSlug();
 
   const status = statusData?.data;
+  const plans = plansData?.data ?? [];
   const isActive = Boolean(status?.isActive);
   const isPubliclyHidden = status?.isPubliclyVisible === false;
   const currentSlug = status?.slug ?? null;
-  const required = status?.requiredPaidBookings ?? 300;
-  const paidBookings = status?.paidBookingsCount ?? 0;
-  const progress = Math.min(100, Math.round((paidBookings / required) * 100));
-  const price = status?.packagePriceTomans ?? 773000;
-  const hasReferralDiscount = Boolean(status?.hasReferralDiscount);
-  const referralDiscountAmount = Math.round(price / 2);
   const publicUrl = status?.publicUrl ?? '';
+  const subscription = status?.subscription ?? null;
+  const nowMs = useSubscriptionNow() * SUBSCRIPTION_TICK_MS;
+
+  const subscriptionRemainingDays = subscription
+    ? Math.max(
+        0,
+        Math.ceil(
+          (new Date(subscription.endDate).getTime() - nowMs) / 86_400_000,
+        ),
+      )
+    : 0;
+  /**
+   * پلن‌های تمدید همیشه نمایش داده می‌شوند چون تنها مسیر فعال‌سازی همین
+   * اشتراک است (چه صفحه فعال باشد تا تمدید، چه غیرفعال تا فعال‌سازی دوباره).
+   */
+  const showRenewalPlans = true;
 
   // اسلاگ فقط یک بار ثبت می‌شود: بعد از ثبت، فرم انتخاب اسلاگ دیگر نمایش داده
   // نمی‌شود و بک‌اند هم هر تلاش برای تغییر را رد می‌کند.
@@ -139,8 +179,7 @@ export default function PublicPagePage() {
       const savedSlug = response.data?.slug ?? localValidation.slug;
       // لحظه‌ای که صفحه برای اولین بار واقعاً قابل مشاهده می‌شود = انتشار.
       trackEventOnce(`profile-published:${savedSlug}`, 'provider_profile_published', {
-        activation:
-          status?.reason === 'PAID_BOOKINGS' ? 'paid_bookings' : 'package',
+        activation: 'subscription',
       });
       void revalidateMyPublicBarberPage([currentSlug, savedSlug]);
       setSlugDraft('');
@@ -148,20 +187,6 @@ export default function PublicPagePage() {
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'خطا در ثبت اسلاگ'));
       throw error;
-    }
-  };
-
-  const handleApplyDiscount = async () => {
-    const code = discountCode.trim().toUpperCase();
-    if (!code) {
-      toast.error('کد تخفیف را وارد کنید');
-      return;
-    }
-    try {
-      const response = await quoteDiscount.mutateAsync(code);
-      toast.success(`کد تخفیف ${response.data.code} با موفقیت اعمال شد`);
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, 'کد تخفیف معتبر نیست'));
     }
   };
 
@@ -204,7 +229,7 @@ export default function PublicPagePage() {
 
             <p className="mt-3 text-sm leading-7 text-muted-foreground">
               {!isActive
-                ? 'صفحهٔ اختصاصی شما غیرفعال است. با خرید پکیج یا رسیدن به ۳۰۰ رزرو موفقِ پرداخت‌شده در درگاه فعال می‌شود و سپس می‌توانید اسلاگ دلخواه سالن خود را ثبت کنید.'
+                ? 'صفحهٔ اختصاصی شما غیرفعال است. با خرید یکی از پلن‌های اشتراک پروفایل اختصاصی فعال می‌شود و سپس می‌توانید اسلاگ دلخواه سالن خود را ثبت کنید.'
                 : isPubliclyHidden
                   ? 'امتیاز و آدرس صفحهٔ اختصاصی شما محفوظ است، اما نمایش عمومی سالن توسط مدیریت غیرفعال شده است.'
                   : currentSlug
@@ -400,175 +425,131 @@ export default function PublicPagePage() {
               </p>
             )}
 
-            {status?.reason === 'PACKAGE' && status.purchasedAt && (
+            {status?.reason === 'SUBSCRIPTION' && subscription && (
               <p className="mt-3 text-xs text-muted-foreground">
-                پکیج در تاریخ{' '}
+                پروفایل اختصاصی شما با اشتراک «{subscription.planName}» فعال
+                است و تا{' '}
                 {toPersianDigits(
-                  new Date(status.purchasedAt).toLocaleDateString('fa-IR'),
+                  new Date(subscription.endDate).toLocaleDateString('fa-IR'),
                 )}{' '}
-                خریداری شده و فعال است.
+                ({toPersianDigits(subscriptionRemainingDays)} روز دیگر) اعتبار
+                دارد.
               </p>
             )}
           </AppCard>
 
-          {!isActive && (
-            <AppCard className="bg-gradient-to-br from-primary to-primary/60 text-white">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-white/70">پکیج صفحهٔ اختصاصی</p>
-                  <h3 className="mt-2 text-3xl font-black">
-                    {formatFaNumber(
-                      hasReferralDiscount
-                        ? referralDiscountAmount
-                        : (appliedDiscount?.amount ?? price),
-                    )}
-                  </h3>
-                  <p className="text-sm text-white/70">
-                    تومان — پرداخت یک‌باره
-                  </p>
-                  {hasReferralDiscount ? (
-                    <div className="mt-2 text-sm">
-                      <p className="text-white/70 line-through">
-                        {formatFaNumber(price)} تومان
-                      </p>
-                      <p className="mt-1 font-bold text-white">
-                        تخفیف ویژهٔ دعوت: ۵۰٪
-                      </p>
-                    </div>
-                  ) : appliedDiscount ? (
-                    <div className="mt-2 text-sm">
-                      <p className="text-white/70 line-through">
-                        {formatFaNumber(appliedDiscount.originalAmount)} تومان
-                      </p>
-                      <p className="mt-1 font-bold text-white">
-                        با تخفیف {toPersianDigits(appliedDiscount.percentOff)}٪:{' '}
-                        {formatFaNumber(appliedDiscount.amount)} تومان
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-                <Sparkles size={30} className="text-white/60" />
+          {/* وضعیت اشتراک «پروفایل اختصاصی» (دورهٔ رایگان یا پلن تمدید پولی) */}
+          {subscription && (
+            <AppCard>
+              <div className="flex flex-wrap items-center gap-2">
+                <BadgeCheck size={20} className="text-primary" />
+                <h2 className="text-base font-black text-gray-900">
+                  اشتراک پروفایل اختصاصی
+                </h2>
+                {subscription.isFreeTrial ? (
+                  <Badge variant="secondary">دورهٔ رایگان</Badge>
+                ) : (
+                  <Badge variant="secondary">پلن پولی</Badge>
+                )}
               </div>
 
-              <ul className="mt-5 space-y-2 text-sm text-white/90">
-                <li>• صفحهٔ اختصاصی و سئوشده برای سالن شما در گوگل</li>
-                <li>
-                  • انتخاب یک‌بارهٔ اسلاگ (آدرس اختصاصی یکتا) بدون نمایش آیدی
-                </li>
-                <li>• نمایش خدمات، قیمت‌ها، نمونه‌کارها و نظرات</li>
-                <li>• فعال‌سازی آنی بدون نیاز به تمدید</li>
-              </ul>
-
-              {hasReferralDiscount ? (
-                <p className="mt-5 rounded-2xl border border-white/20 bg-white/10 p-3 text-sm leading-6 text-white">
-                  به‌دلیل ثبت‌نام با کد معرف، تخفیف ۵۰٪ خرید صفحهٔ عمومی به‌صورت
-                  خودکار اعمال شده است.
-                </p>
-              ) : (
-                <div className="mt-5 rounded-2xl border border-white/20 bg-white/10 p-3">
-                  <label
-                    htmlFor="public-page-discount"
-                    className="mb-2 flex items-center gap-2 text-sm font-bold text-white"
-                  >
-                    <Tag size={15} /> کد تخفیف دارید؟
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="public-page-discount"
-                      dir="ltr"
-                      value={discountCode}
-                      maxLength={32}
-                      autoComplete="off"
-                      placeholder="کد تخفیف"
-                      className="bg-white text-gray-900 placeholder:text-gray-400"
-                      onChange={event => {
-                        setDiscountCode(
-                          event.target.value.replace(/\s/g, '').toUpperCase(),
-                        );
-                        quoteDiscount.reset();
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={!discountCode.trim() || quoteDiscount.isPending}
-                      onClick={() => void handleApplyDiscount()}
-                    >
-                      {quoteDiscount.isPending ? (
-                        <Loader2 size={15} className="animate-spin" />
-                      ) : (
-                        'اعمال'
-                      )}
-                    </Button>
-                  </div>
-                  {appliedDiscount && (
-                    <p className="mt-2 text-xs font-semibold text-white">
-                      {toPersianDigits(appliedDiscount.percentOff)}٪ تخفیف —
-                      صرفه‌جویی {formatFaNumber(appliedDiscount.discountAmount)}{' '}
-                      تومان
-                    </p>
-                  )}
+              <dl className="mt-4 space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">پلن</dt>
+                  <dd className="font-bold text-gray-900">
+                    {subscription.planName}
+                  </dd>
                 </div>
-              )}
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">تاریخ شروع</dt>
+                  <dd className="font-bold text-gray-900">
+                    {toPersianDigits(
+                      new Date(subscription.startDate).toLocaleDateString(
+                        'fa-IR',
+                      ),
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">تاریخ پایان</dt>
+                  <dd className="font-bold text-gray-900">
+                    {toPersianDigits(
+                      new Date(subscription.endDate).toLocaleDateString('fa-IR'),
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">اعتبار باقی‌مانده</dt>
+                  <dd className="font-bold text-gray-900">
+                    {toPersianDigits(subscriptionRemainingDays)} روز
+                  </dd>
+                </div>
+              </dl>
 
-              <Button
-                variant="secondary"
-                className="mt-5 w-full text-primary"
-                disabled={
-                  payPublicPage.isPending ||
-                  quoteDiscount.isPending ||
-                  (!hasReferralDiscount &&
-                    Boolean(discountCode.trim()) &&
-                    !appliedDiscount)
-                }
-                onClick={() =>
-                  payPublicPage.mutate(
-                    hasReferralDiscount
-                      ? undefined
-                      : (appliedDiscount?.code ?? undefined),
-                  )
-                }
-              >
-                {payPublicPage.isPending ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : null}
-                خرید و فعال‌سازی صفحهٔ اختصاصی
-              </Button>
+              <p className="mt-3 rounded-2xl border border-primary/20 bg-primary-2/40 p-3 text-xs leading-6 text-muted-foreground">
+                در پایان این دوره، صفحهٔ اختصاصی شما غیرفعال می‌شود. با تمدید
+                اشتراک، مدت اعتبار به زمان باقی‌مانده اضافه می‌شود و چیزی از
+                دست نمی‌رود.
+              </p>
             </AppCard>
           )}
 
-          {/* کارت فعال‌سازی رایگان فقط وقتی معنا دارد که صفحه با خرید پکیج فعال نشده باشد */}
-          {!(isActive && status?.reason === 'PACKAGE') && (
+          {/* پلن‌های تمدید اشتراک پروفایل اختصاصی */}
+          {showRenewalPlans && (
             <AppCard>
               <h2 className="text-base font-black text-gray-900">
-                فعال‌سازی رایگان با رزروهای موفق
+                تمدید اشتراک پروفایل اختصاصی
               </h2>
               <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                با رسیدن به {toPersianDigits(required)} رزرو موفق که پرداخت
-                آن‌ها در درگاه با موفقیت انجام شده و لغو یا برگشت نشده باشند
-                (مشابه بخش امور مالی)، صفحهٔ اختصاصی به‌صورت رایگان و برای همیشه
-                فعال می‌شود.
+                یکی از پلن‌های زیر را انتخاب کنید. قیمت‌ها به‌صورت قطعی از
+                سامانه دریافت می‌شوند و پس از پرداخت موفق، مدت اعتبار شما به
+                زمان باقی‌مانده اضافه می‌شود.
               </p>
 
-              <div className="mt-4">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-bold text-gray-800">
-                    {toPersianDigits(paidBookings)} از{' '}
-                    {toPersianDigits(required)}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {toPersianDigits(progress)}٪
-                  </span>
+              {isLoadingPlans ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Skeleton className="h-32" />
+                  <Skeleton className="h-32" />
                 </div>
-                <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all"
-                    style={{ width: `${progress}%` }}
-                  />
+              ) : (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {plans.map(plan => (
+                    <div
+                      key={plan.id}
+                      className="flex flex-col rounded-2xl border border-gray-200 bg-gray-50/60 p-4"
+                    >
+                      <h3 className="text-sm font-black text-gray-900">
+                        {plan.name}
+                      </h3>
+                      <p className="mt-2 text-2xl font-black text-primary">
+                        {formatFaNumber(plan.price)}
+                        <span className="mr-1 text-xs font-medium text-muted-foreground">
+                          تومان
+                        </span>
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {toPersianDigits(plan.durationDays)} روز دسترسی
+                      </p>
+                      <Button
+                        size="sm"
+                        className="mt-4 w-full"
+                        disabled={payPublicPage.isPending}
+                        onClick={() =>
+                          payPublicPage.mutate({ planId: plan.id })
+                        }
+                      >
+                        {payPublicPage.isPending ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : null}
+                        انتخاب و پرداخت
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-              </div>
+              )}
             </AppCard>
           )}
+
         </div>
       </FadeIn>
     </DashboardShell>

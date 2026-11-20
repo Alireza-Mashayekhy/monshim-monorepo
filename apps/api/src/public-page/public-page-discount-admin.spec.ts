@@ -1,3 +1,8 @@
+jest.mock('@nestjs/schedule', () => ({
+  Cron: () => () => undefined,
+  CronExpression: new Proxy({}, { get: () => '0 * * * *' }),
+}));
+
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 
@@ -51,6 +56,7 @@ function createDiscountService(options?: { saveError?: Error }) {
     unused,
     unused,
     { get: () => undefined } as never,
+    unused,
   );
 
   return { service, discountRepo, rows };

@@ -1,3 +1,8 @@
+jest.mock('@nestjs/schedule', () => ({
+  Cron: () => () => undefined,
+  CronExpression: new Proxy({}, { get: () => '0 * * * *' }),
+}));
+
 import { Referral, ReferralStatus } from './entities/referral.entity';
 import { ReferralService } from './referral.service';
 
@@ -432,5 +437,59 @@ describe('جمع پاداش‌های گزارش‌شده در getMyReferrals', (
       ['a', 30],
       ['b', 5],
     ]);
+  });
+});
+
+describe('ReferralService — غیرفعال‌بودن موقت سیستم کد معرف', () => {
+  const ORIGINAL_FLAG = process.env.ENABLE_REFERRAL;
+
+  afterEach(() => {
+    if (ORIGINAL_FLAG === undefined) delete process.env.ENABLE_REFERRAL;
+    else process.env.ENABLE_REFERRAL = ORIGINAL_FLAG;
+  });
+
+  function buildCreateHarness() {
+    const barberProfileRepo = {
+      findOne: jest.fn(({ where }: any) =>
+        Promise.resolve({
+          id: `profile-${where.userId}`,
+          userId: where.userId,
+        }),
+      ),
+    };
+    const referralRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((value: any) => ({ ...value })),
+      save: jest.fn((value: any) => Promise.resolve(value)),
+    };
+
+    const service = new ReferralService(
+      referralRepo as any,
+      barberProfileRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    return { service, referralRepo };
+  }
+
+  it('به‌صورت پیش‌فرض (flag خاموش) هیچ رکورد دعوت جدیدی نمی‌سازد', async () => {
+    delete process.env.ENABLE_REFERRAL;
+    const { service, referralRepo } = buildCreateHarness();
+
+    await expect(service.createReferral(10, 20)).resolves.toBeNull();
+    expect(referralRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('با روشن‌کردن flag دوباره مثل قبل کار می‌کند', async () => {
+    process.env.ENABLE_REFERRAL = 'true';
+    const { service, referralRepo } = buildCreateHarness();
+
+    await expect(service.createReferral(10, 20)).resolves.toMatchObject({
+      referrerUserId: 10,
+      referredUserId: 20,
+    });
+    expect(referralRepo.save).toHaveBeenCalledTimes(1);
   });
 });

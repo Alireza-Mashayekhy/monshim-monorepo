@@ -40,7 +40,9 @@ export interface AnalyticsEventMap {
   /** ثبت‌نام مشتری با موفقیت انجام شد. */
   customer_registration_completed: { source: 'register' | 'booking_dialog' };
   /** صفحهٔ اختصاصی سالن برای اولین بار فعال/منتشر شد. */
-  provider_profile_published: { activation: 'package' | 'paid_bookings' };
+  provider_profile_published: {
+    activation: 'package' | 'paid_bookings' | 'subscription';
+  };
   /** بازدید از صفحهٔ عمومی یک آرایشگر. */
   provider_profile_viewed: { has_portfolio: boolean; has_reviews: boolean };
   /** شروع فرایند رزرو (کلیک روی دکمهٔ رزرو). */

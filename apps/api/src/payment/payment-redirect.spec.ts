@@ -37,6 +37,8 @@ const buildService = (env: Record<string, string | undefined>) => {
     repository, // workHoursRepo
     {} as never, // bookingSmsService
     {} as never, // publicPageService
+    {} as never, // subscriptionService
+    {} as never, // userSubscriptionService
     {} as never, // referralService
     {} as never, // walletService
     configService,

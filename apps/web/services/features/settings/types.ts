@@ -19,4 +19,6 @@ export interface PublicSiteSettings {
   commissionMode?: CommissionMode;
   commissionTiers?: CommissionTier[];
   commissionMaxAmount?: number | null;
+  /** آیا سیستم «کد معرف» در بک‌اند فعال است؟ */
+  referralEnabled?: boolean;
 }

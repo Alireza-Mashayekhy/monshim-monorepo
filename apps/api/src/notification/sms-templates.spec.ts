@@ -10,6 +10,7 @@ import {
   depositLinkParams,
   depositPaidBarberParams,
   depositPaidCustomerParams,
+  publicPageFreeTrialParams,
   SMS_TEMPLATES,
   withdrawalPaidParams,
 } from './sms-templates';
@@ -158,6 +159,26 @@ describe('sms-templates', () => {
     expect(parameters).toContainEqual({ name: 'TIME', value: '۱۶:۳۰' });
     expect(parameters).toContainEqual({ name: 'NAME', value: 'سارا محمدی' });
     expectAllParamsWithinLimit(parameters);
+  });
+
+  it('پارامتر NAME پیامک «فعال‌شدن دورهٔ رایگان پروفایل اختصاصی» (415808) را می‌سازد', () => {
+    expect(SMS_TEMPLATES.PUBLIC_PAGE_FREE_TRIAL).toBe(415808);
+
+    expect(publicPageFreeTrialParams({ barberName: 'علی رضایی' })).toEqual([
+      { name: 'NAME', value: 'علی رضایی' },
+    ]);
+
+    // نام خالی → مقدار پیش‌فرض تا قالب خالی نماند
+    expect(publicPageFreeTrialParams({})).toEqual([
+      { name: 'NAME', value: 'آرایشگر' },
+    ]);
+
+    // نام طولانی تا سقف ۲۵ کاراکتر SMS.ir کوتاه می‌شود
+    const clipped = publicPageFreeTrialParams({
+      barberName: 'سید محمدحسین طباطبایی بزرگمهر تهرانی',
+    });
+    expectAllParamsWithinLimit(clipped);
+    expect(clipped[0].value).toHaveLength(MAX);
   });
 
   it('پارامترهای پیامک پرداخت موفق بیعانه به مشتری (634504) را با ترتیب قالب می‌سازد', () => {

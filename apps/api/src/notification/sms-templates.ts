@@ -58,6 +58,20 @@ export const SMS_TEMPLATES = {
    * این قالب همان لحظه برای آرایشگر ارسال می‌شود (#NAME#).
    */
   WITHDRAWAL_PAID_BARBER: 142864,
+
+  /**
+   * 🎁 فعال‌شدن دورهٔ رایگان یک‌ماههٔ «پروفایل اختصاصی» — پیامک به آرایشگر
+   *
+   * بلافاصله پس از ثبت‌نام موفق آرایشگر و اعطای دورهٔ رایگان **پروفایل
+   * اختصاصی (صفحهٔ عمومی آرایشگاه)** ارسال می‌شود. متن قالب:
+   *   «#NAME# عزیز پروفایل اختصاصی شما در منشیم به مدت یک ماه رایگان فعال
+   *    شد. از این فرصت برای معرفی خدمات و جذب مشتری بیشتر استفاده کنید.
+   *    monshiim.ir»
+   *
+   * شناسهٔ قالب: ۴۱۵۸۰۸ (ثبت‌شده در پنل sms.ir). می‌توان آن را از طریق
+   * متغیر محیطی `SMS_IR_TEMPLATE_PUBLIC_PAGE_TRIAL` بدون تغییر کد تنظیم کرد.
+   */
+  PUBLIC_PAGE_FREE_TRIAL: 415808,
 } as const;
 
 /** تبدیل ارقام انگلیسی به فارسی */
@@ -235,4 +249,14 @@ export function barberProfileApprovedParams(
 /** پارامترهای قالب «واریز درخواست برداشت» (قالب 142864 — #NAME#) */
 export function withdrawalPaidParams(params: WithdrawalPaidParams) {
   return [{ name: 'NAME', value: clipForSms(params.barberName, 'همکار') }];
+}
+
+/**
+ * پارامترهای قالب «فعال‌شدن دورهٔ رایگان پروفایل اختصاصی» (قالب ۴۱۵۸۰۸).
+ *
+ * قالب در پنل sms.ir یک جایگاه `#NAME#` دارد (نام آرایشگر)، بنابراین
+ * نام آرایشگر به همراه یک fallback زمانی که نام خالی است ارسال می‌شود.
+ */
+export function publicPageFreeTrialParams(params: { barberName?: string }) {
+  return [{ name: 'NAME', value: clipForSms(params.barberName, 'آرایشگر') }];
 }

@@ -1,5 +1,6 @@
 // src/notification/booking-sms.service.ts
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SmsIrService } from 'src/common/services/sms-ir.service';
 
 import {
@@ -18,6 +19,7 @@ import {
   depositPaidBarberParams,
   DepositPaidCustomerParams,
   depositPaidCustomerParams,
+  publicPageFreeTrialParams,
   SMS_TEMPLATES,
   WithdrawalPaidParams,
   withdrawalPaidParams,
@@ -33,7 +35,10 @@ import {
 export class BookingSmsService {
   private readonly logger = new Logger(BookingSmsService.name);
 
-  constructor(private readonly smsIrService: SmsIrService) {}
+  constructor(
+    private readonly smsIrService: SmsIrService,
+    private readonly configService: ConfigService,
+  ) {}
 
   /** ✅ تأیید رزرو برای مشتری (قالب 165709) — رایگان برای آرایشگر */
   async sendBookingSuccessToCustomer(
@@ -211,6 +216,31 @@ export class BookingSmsService {
       SMS_TEMPLATES.WITHDRAWAL_PAID_BARBER,
       withdrawalPaidParams(params),
       'واریز برداشت به آرایشگر',
+    );
+  }
+
+  /**
+   * 🎁 فعال‌شدن دورهٔ رایگان یک‌ماههٔ «پروفایل اختصاصی» — پیامک به آرایشگر.
+   *
+   * فقط پس از ثبت‌نام موفق و اعطای دورهٔ رایگان **پروفایل اختصاصی** (صفحهٔ
+   * عمومی آرایشگاه) از مسیر ثبت‌نام آرایشگر صدا زده می‌شود. قالب ۴۱۵۸۰۸
+   * (#NAME#). شناسهٔ قالب از `SMS_IR_TEMPLATE_PUBLIC_PAGE_TRIAL` خوانده
+   * می‌شود و اگر تنظیم نشده باشد مقدار پیش‌فرض
+   * `SMS_TEMPLATES.PUBLIC_PAGE_FREE_TRIAL` استفاده می‌شود.
+   */
+  async sendPublicPageFreeTrialToBarber(
+    barberPhone: string,
+    params: { barberName?: string },
+  ): Promise<void> {
+    const templateId =
+      this.configService.get<number>('SMS_IR_TEMPLATE_PUBLIC_PAGE_TRIAL') ||
+      SMS_TEMPLATES.PUBLIC_PAGE_FREE_TRIAL;
+
+    await this.safeSend(
+      barberPhone,
+      templateId,
+      publicPageFreeTrialParams(params),
+      'فعال‌شدن دورهٔ رایگان پروفایل اختصاصی به آرایشگر',
     );
   }
 

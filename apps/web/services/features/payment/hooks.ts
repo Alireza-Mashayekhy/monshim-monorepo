@@ -32,16 +32,16 @@ export const usePaySubscription = () => {
   });
 };
 
-/** خرید یک‌بارهٔ پکیج صفحهٔ عمومی آرایشگاه (۷۷۳ هزار تومان) */
+/** خرید/تمدید اشتراک «پروفایل اختصاصی» */
 export const usePayPublicPage = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (discountCode?: string) => payPublicPage(discountCode),
+    mutationFn: (options: { planId: string }) => payPublicPage(options),
     onSuccess: response => {
       const result = response.data;
       const paymentUrl = result?.paymentUrl;
       if (result?.free) {
-        toast.success('کد تخفیف اعمال شد؛ صفحهٔ اختصاصی شما فعال شد');
+        toast.success('اشتراک پروفایل اختصاصی شما فعال شد');
         void queryClient.invalidateQueries({ queryKey: ['public-page'] });
       } else if (paymentUrl) {
         toast.info('در حال انتقال به درگاه پرداخت زیبال...');

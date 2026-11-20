@@ -313,19 +313,21 @@ export const useUpdateWorkHours = () => {
   });
 };
 
-export const useMyReferralCode = () => {
+export const useMyReferralCode = (enabled = true) => {
   return useQuery({
     queryKey: ['my-referral-code'],
     queryFn: getMyReferralCode,
     staleTime: 10 * 60 * 1000, // ۱۰ دقیقه
+    enabled,
   });
 };
 
-export const useMyReferrals = () => {
+export const useMyReferrals = (enabled = true) => {
   return useQuery({
     queryKey: ['my-referrals'],
     queryFn: getMyReferrals,
     staleTime: 2 * 60 * 1000, // ۲ دقیقه
+    enabled,
   });
 };
 

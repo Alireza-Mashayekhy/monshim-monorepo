@@ -1,19 +1,48 @@
 import type { Barber } from '@/services/features/barber/types';
 
-/** دلیل فعال‌بودن صفحهٔ عمومی: خرید پکیج یا رسیدن به حد نصاب رزروهای موفق */
-export type PublicPageActivationReason = 'PACKAGE' | 'PAID_BOOKINGS';
+/**
+ * دلیل فعال‌بودن صفحهٔ عمومی:
+ *   • `SUBSCRIPTION` — اشتراک فعال «پروفایل اختصاصی» (دورهٔ رایگان، مهلت
+ *                      انتقالی خریداران قبلی یا پلن تمدید پولی).
+ *
+ * مسیرهای دائمی قبلی (`PACKAGE` و `PAID_BOOKINGS`) حذف شده‌اند و دیگر از
+ * بک‌اند تولید نمی‌شوند.
+ */
+export type PublicPageActivationReason = 'SUBSCRIPTION';
+
+/** پلن اشتراک «پروفایل اختصاصی» قابل خرید/تمدید */
+export interface PublicPageSubscriptionPlan {
+  id: string;
+  planKey: string | null;
+  name: string;
+  smsCount: number;
+  price: number;
+  durationDays: number;
+  description: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  planType: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** اشتراک فعال «پروفایل اختصاصی» کاربر */
+export interface PublicPageSubscriptionStatus {
+  id: string;
+  planId: string;
+  planKey: string | null;
+  planName: string;
+  /** آیا این اشتراک، دورهٔ رایگان پس از ثبت‌نام است؟ */
+  isFreeTrial: boolean;
+  price: number;
+  startDate: string;
+  endDate: string;
+  status: string;
+}
 
 export interface PublicPageStatus {
   isActive: boolean;
   reason: PublicPageActivationReason | null;
-  /** تعداد رزروهای موفقی که پرداخت آن‌ها در درگاه انجام شده و لغو/برگشت نشده‌اند */
-  paidBookingsCount: number;
-  /** حد نصاب رزروهای موفق برای فعال‌سازی بدون خرید پکیج */
-  requiredPaidBookings: number;
-  /** قیمت پکیج صفحهٔ عمومی به تومان */
-  packagePriceTomans: number;
-  /** زمان خرید پکیج (در صورت خرید) */
-  purchasedAt: string | null;
   /** اسلاگ اختصاصی ثبت‌شده برای آدرس عمومی سالن */
   slug: string | null;
   /**
@@ -25,10 +54,15 @@ export interface PublicPageStatus {
   publicUrl: string | null;
   /** آیا پروفایل آرایشگر تایید شده است؟ (بدون تایید، صفحه عمومی نمایش داده نمی‌شود) */
   isApproved: boolean;
-  /** وضعیت نمایش عمومی مستقل از فعال‌بودن پکیج است. */
+  /** وضعیت نمایش عمومی مستقل از فعال‌بودن اشتراک است. */
   isPubliclyVisible?: boolean;
   /** فقط آرایشگرانی که با کد معرف ثبت‌نام کرده‌اند تخفیف ویژهٔ خرید دارند. */
   hasReferralDiscount: boolean;
+  /**
+   * اشتراک فعال «پروفایل اختصاصی» (دورهٔ رایگان، مهلت انتقالی خریداران قبلی
+   * یا پلن تمدید پولی). `null` یعنی صفحه غیرفعال است.
+   */
+  subscription?: PublicPageSubscriptionStatus | null;
 }
 
 export interface PublicPageDiscountQuote {

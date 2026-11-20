@@ -1,8 +1,12 @@
-import { IsOptional, IsString, Matches } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class InitiatePublicPagePaymentDto {
-  @IsOptional()
+  /**
+   * شناسهٔ پلن اشتراک «پروفایل اختصاصی» که آرایشگر برای خرید/تمدید انتخاب
+   * کرده است. قیمت نهایی در بک‌اند از روی همین پلن محاسبه می‌شود و به
+   * مقدار ارسال‌شده از فرانت اعتماد نمی‌شود.
+   */
   @IsString()
-  @Matches(/^[a-zA-Z0-9_-]{3,32}$/)
-  discountCode?: string;
+  @IsNotEmpty()
+  planId: string;
 }

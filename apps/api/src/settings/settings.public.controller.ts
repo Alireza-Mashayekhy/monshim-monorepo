@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import {
   type CommissionMode,
   type CommissionTier,
@@ -15,6 +16,13 @@ export interface PublicCommissionSettingsResponse {
   commissionMode: CommissionMode;
   commissionTiers: CommissionTier[];
   commissionMaxAmount: number | null;
+  /**
+   * آیا سیستم «کد معرف» فعال است؟
+   *
+   * فرانت برای نمایش/نهفتن قسمت‌های دعوت از این پرچم استفاده می‌کند تا
+   * غیرفعال‌بودن سیستم فقط با تغییر یک feature flag در بک‌اند اعمال شود.
+   */
+  referralEnabled: boolean;
 }
 
 @Controller('settings')
@@ -37,6 +45,7 @@ export class PublicSettingsController {
       commissionMode: settings.commissionMode === 'flat' ? 'flat' : 'tiered',
       commissionTiers: normalizeCommissionTiers(settings.commissionTiers),
       commissionMaxAmount: settings.commissionMaxAmount ?? null,
+      referralEnabled: isRuntimeFlagEnabled('ENABLE_REFERRAL', false),
     };
   }
 

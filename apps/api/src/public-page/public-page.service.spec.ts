@@ -1,17 +1,16 @@
+jest.mock('@nestjs/schedule', () => ({
+  Cron: () => () => undefined,
+  CronExpression: new Proxy({}, { get: () => '0 * * * *' }),
+}));
+
 import {
   BadRequestException,
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { ACTIVE_BOOKING_STATUSES } from 'src/booking/entities/booking.entity';
-import {
-  PaymentPurpose,
-  PaymentStatus,
-} from 'src/payment/entities/payment.entity';
-import { TransactionType } from 'src/wallet/entities/transaction.entity';
 import { IsNull } from 'typeorm';
 
-import { PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS } from './constants';
+import { PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS } from './constants';
 import {
   PUBLIC_PAGE_SLUG_LOCKED_MESSAGE,
   PublicPageService,
@@ -62,22 +61,39 @@ describe('PublicPageService', () => {
     await expect(service.getDiscountQuote(' save25 ')).resolves.toEqual({
       code: 'SAVE25',
       percentOff: 25,
-      originalAmount: 773_000,
-      discountAmount: 193_250,
-      amount: 579_750,
+      originalAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
+      discountAmount: Math.round(
+        (PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS * 25) / 100,
+      ),
+      amount:
+        PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS -
+        Math.round((PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS * 25) / 100),
     });
   });
 
-  it('برای کاربری که واقعاً با کد معرف ثبت‌نام کرده، تخفیف ۵۰٪ خودکار می‌دهد', async () => {
+  it('به‌صورت پیش‌فرض تخفیف ۵۰٪ی معرفی غیرفعال است و اعمال نمی‌شود', async () => {
+    delete process.env.ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT;
     const { service } = createService({ hasReferral: true });
 
-    await expect(service.getReferralDiscountQuote(20)).resolves.toEqual({
-      code: null,
-      percentOff: 50,
-      originalAmount: 773_000,
-      discountAmount: 386_500,
-      amount: 386_500,
-    });
+    await expect(service.hasReferralDiscount(20)).resolves.toBe(false);
+    await expect(service.getReferralDiscountQuote(20)).resolves.toBeNull();
+  });
+
+  it('با روشن‌کردن feature flag، تخفیف ۵۰٪ی معرفی برای کاربر دعوت‌شده اعمال می‌شود', async () => {
+    process.env.ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT = 'true';
+    try {
+      const { service } = createService({ hasReferral: true });
+
+      await expect(service.getReferralDiscountQuote(20)).resolves.toEqual({
+        code: null,
+        percentOff: 50,
+        originalAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
+        discountAmount: 386_500,
+        amount: 386_500,
+      });
+    } finally {
+      delete process.env.ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT;
+    }
   });
 
   it('کد تخفیف صددرصدی خرید را رایگان می‌کند و کد نامعتبر رد می‌شود', async () => {
@@ -86,7 +102,7 @@ describe('PublicPageService', () => {
     });
     await expect(service.getDiscountQuote('FREE100')).resolves.toMatchObject({
       amount: 0,
-      discountAmount: 773_000,
+      discountAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
     });
 
     const { service: withoutDiscount } = createService();
@@ -132,30 +148,27 @@ describe('PublicPageService', () => {
     purchase?: any;
     paidBookingsCount?: number;
     qualifiedRows?: any[];
-    purchaseDirectoryRows?: any[];
+    directorySubscriptions?: any[];
     duplicateDbError?: boolean;
     updateAffected?: number;
     discount?: any;
     hasReferral?: boolean;
+    subscription?: any;
+    /** ردیف‌های جدول خرید قبلی پکیج (ورودی انتقال خریداران قبلی) */
+    legacyPurchases?: Array<{ userId: number }>;
+    /** نتیجهٔ اعطای مهلت انتقالی به ازای هر کاربر (null = پلن seed نشده) */
+    legacyGrant?: (
+      userId: number,
+    ) => { created: boolean } | null | Promise<{ created: boolean } | null>;
   }) {
     const bookingQb = createMockBookingQb({
       count: params?.paidBookingsCount ?? 0,
       rawRows: params?.qualifiedRows ?? [],
     });
 
-    const purchaseQb: any = {
-      select: jest.fn().mockReturnThis(),
-      addSelect: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      groupBy: jest.fn().mockReturnThis(),
-      getRawMany: jest
-        .fn()
-        .mockResolvedValue(params?.purchaseDirectoryRows ?? []),
-    };
-
     const purchaseRepo: any = {
       findOne: jest.fn().mockResolvedValue(params?.purchase ?? null),
-      createQueryBuilder: jest.fn(() => purchaseQb),
+      find: jest.fn().mockResolvedValue(params?.legacyPurchases ?? []),
       create: jest.fn(x => x),
       save: jest.fn(x => Promise.resolve(x)),
     };
@@ -222,6 +235,20 @@ describe('PublicPageService', () => {
     const referralRepo: any = {
       count: jest.fn().mockResolvedValue(params?.hasReferral ? 1 : 0),
     };
+    const userSubscriptionService = {
+      getCurrentPublicPageSubscription: jest
+        .fn()
+        .mockResolvedValue(params?.subscription ?? null),
+      findActivePublicPageSubscriptionsForUsers: jest
+        .fn()
+        .mockResolvedValue(params?.directorySubscriptions ?? []),
+      grantLegacyPublicPageAccess: jest.fn((userId: number) =>
+        Promise.resolve(
+          params?.legacyGrant ? params.legacyGrant(userId) : { created: true },
+        ),
+      ),
+    };
+
     const service = new PublicPageService(
       purchaseRepo,
       discountRepo,
@@ -230,6 +257,7 @@ describe('PublicPageService', () => {
       referralRepo,
       barberService,
       configService,
+      userSubscriptionService as never,
     );
 
     return {
@@ -238,10 +266,11 @@ describe('PublicPageService', () => {
       profileRepo,
       purchaseRepo,
       barberService,
+      userSubscriptionService,
     };
   }
 
-  it('فقط رزروهای غیروضعیتِ لغو/رد و دارای پرداخت موفقِ برگشت‌نخوردهٔ درگاه را می‌شمارد (هم‌راستا با امور مالی)', async () => {
+  it('بدون اشتراک فعال، صفحه غیرفعال است حتی اگر رزروهای موفق زیاد داشته باشیم', async () => {
     const { service, bookingQb } = createService({
       profile: {
         id: 'prof-1',
@@ -250,41 +279,53 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: null,
       },
-      paidBookingsCount: 15,
+      paidBookingsCount: 300,
     });
 
     const status = await service.getStatusByUserId(42);
-    expect(status.packagePriceTomans).toBe(773_000);
-    expect(status.paidBookingsCount).toBe(15);
     expect(status.isActive).toBe(false);
+    expect(status.reason).toBeNull();
     expect(status.publicUrl).toBeNull();
 
-    // ۱) حذف رزروهای لغوشده و ردشده
-    expect(bookingQb.andWhere).toHaveBeenCalledWith(
-      'booking.status IN (:...activeBookingStatuses)',
-      { activeBookingStatuses: ACTIVE_BOOKING_STATUSES },
-    );
+    // مسیر رزرو/خرید حذف شده است و دیگر باعث فعال‌شدن نمی‌شود.
+    expect(bookingQb.andWhere).not.toHaveBeenCalled();
+  });
 
-    // ۲) بررسی وجود رکورد پرداخت موفق درگاه و برگشت‌نخورده (مشابه امور مالی)
-    const existsCall = bookingQb.andWhere.mock.calls.find(
-      ([sql]: [unknown]) =>
-        typeof sql === 'string' && sql.startsWith('EXISTS '),
-    );
-    expect(existsCall).toBeTruthy();
-    expect(existsCall[1]).toEqual(
-      expect.objectContaining({
-        bookingPaymentPurpose: PaymentPurpose.BOOKING,
-        paidPaymentStatus: PaymentStatus.PAID,
-        refundTxType: TransactionType.REFUND,
-      }),
-    );
+  it('با اشتراک فعال پروفایل اختصاصی، صفحه با دلیل SUBSCRIPTION فعال می‌شود', async () => {
+    const { service, bookingQb } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      paidBookingsCount: 300,
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
+    });
 
-    const subQb = bookingQb.__subQb;
-    const notRefundedSubCall = subQb.andWhere.mock.calls.find(
-      ([sql]: [unknown]) =>
-        typeof sql === 'string' && sql.includes('SELECT refund_tx.referenceId'),
-    );
-    expect(notRefundedSubCall).toBeTruthy();
+    const status = await service.getStatusByUserId(42);
+    expect(status.isActive).toBe(true);
+    expect(status.reason).toBe('SUBSCRIPTION');
+    expect(status.slug).toBe('aria-salon');
+    expect(status.publicUrl).toBe('https://monshiim.ir/provider/aria-salon');
+    // دیگر فیلدهای مسیر حذف‌شده وجود ندارد.
+    expect('paidBookingsCount' in status).toBe(false);
+    expect('packagePriceTomans' in status).toBe(false);
+
+    expect(bookingQb.andWhere).not.toHaveBeenCalled();
   });
 
   it('وقتی صفحه فعال است اما هنوز اسلاگ ثبت نشده، آیدی را در publicUrl نشان نمی‌دهد', async () => {
@@ -296,12 +337,24 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: null,
       },
-      paidBookingsCount: PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS,
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     const status = await service.getStatusByUserId(42);
     expect(status.isActive).toBe(true);
-    expect(status.reason).toBe('PAID_BOOKINGS');
+    expect(status.reason).toBe('SUBSCRIPTION');
     expect(status.slug).toBeNull();
     expect(status.publicUrl).toBeNull();
   });
@@ -333,7 +386,19 @@ describe('PublicPageService', () => {
         slug: null,
       },
       existingSlugOwner: { id: 'prof-other', userId: 99 },
-      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     const availability = await dupService.checkSlugAvailability(
@@ -355,7 +420,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: null,
       },
-      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     const updated = await okService.updateSlugByUserId(42, '  Aria-Salon  ');
@@ -378,7 +455,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: 'aria-salon',
       },
-      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     await expect(
@@ -401,7 +490,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: 'aria-salon',
       },
-      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     const status = await service.updateSlugByUserId(42, ' Aria-Salon ');
@@ -419,7 +520,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: null,
       },
-      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
       updateAffected: 0,
     });
 
@@ -437,7 +550,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: 'aria-salon',
       },
-      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     const availability = await service.checkSlugAvailability(
@@ -457,7 +582,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: null,
       },
-      purchase: { id: 'pur-1', createdAt: new Date() },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
       duplicateDbError: true,
     });
 
@@ -476,7 +613,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: 'aria-salon',
       },
-      purchase: { id: 'pur-1', createdAt: new Date('2026-01-01T00:00:00Z') },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
     const status = await service.getStatusByUserId(42);
     expect(status).toMatchObject({
@@ -504,7 +653,19 @@ describe('PublicPageService', () => {
         slug: 'aria-salon',
       },
       profiles: [{ id: 'prof-1', userId: 42, slug: 'aria-salon' }],
-      purchase: { id: 'pur-1', createdAt: new Date() },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
     barberService.findPublicOne.mockRejectedValue(new NotFoundException());
     barberService.getPublicDirectory.mockResolvedValue({
@@ -527,7 +688,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: null,
       },
-      purchase: { id: 'pur-1', createdAt: new Date() },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     await expect(withoutSlug.getPublicBarberPage('42')).rejects.toBeInstanceOf(
@@ -542,7 +715,19 @@ describe('PublicPageService', () => {
         salonName: 'سالن آریا',
         slug: 'aria-salon',
       },
-      purchase: { id: 'pur-1', createdAt: new Date() },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
     });
 
     const page = await withSlug.getPublicBarberPage('aria-salon');
@@ -565,9 +750,9 @@ describe('PublicPageService', () => {
         },
         { id: 'prof-2', userId: 20, slug: null },
       ],
-      purchaseDirectoryRows: [
-        { barberProfileId: 'prof-1', updatedAt: '2026-02-01T00:00:00.000Z' },
-        { barberProfileId: 'prof-2', updatedAt: '2026-02-01T00:00:00.000Z' },
+      directorySubscriptions: [
+        { userId: 10, endDate: new Date('2026-02-01T00:00:00.000Z') },
+        { userId: 20, endDate: new Date('2026-02-01T00:00:00.000Z') },
       ],
     });
 
@@ -593,12 +778,108 @@ describe('PublicPageService', () => {
           createdAt: '2025-06-01T00:00:00.000Z',
         },
       ],
-      purchaseDirectoryRows: [
-        { barberProfileId: 'prof-1', updatedAt: '2026-02-01T00:00:00.000Z' },
+      directorySubscriptions: [
+        { userId: 10, endDate: new Date('2026-02-01T00:00:00.000Z') },
       ],
     });
 
     const directory = await service.getActiveDirectory();
     expect(directory[0].updatedAt).toBe('2025-06-01T00:00:00.000Z');
+  });
+  describe('انتقال خریداران قبلی پکیج (مهلت انتقالی ۶ ماهه)', () => {
+    it('برای هر خریدار قبلی فقط یک‌بار مهلت انتقالی اعطا می‌کند (userIdهای تکراری یکی می‌شوند)', async () => {
+      const { service, userSubscriptionService } = createService({
+        legacyPurchases: [{ userId: 7 }, { userId: 9 }, { userId: 7 }],
+      });
+
+      await expect(service.grantLegacyPublicPageAccess()).resolves.toEqual({
+        buyers: 2,
+        granted: 2,
+        failed: 0,
+      });
+
+      expect(
+        userSubscriptionService.grantLegacyPublicPageAccess,
+      ).toHaveBeenCalledTimes(2);
+      expect(
+        userSubscriptionService.grantLegacyPublicPageAccess,
+      ).toHaveBeenCalledWith(7);
+      expect(
+        userSubscriptionService.grantLegacyPublicPageAccess,
+      ).toHaveBeenCalledWith(9);
+    });
+
+    it('اجرای دوباره idempotent است: کاربرانی که قبلاً اشتراک گرفته‌اند شمرده نمی‌شوند', async () => {
+      const { service } = createService({
+        legacyPurchases: [{ userId: 7 }, { userId: 9 }],
+        legacyGrant: userId => ({ created: userId === 9 }),
+      });
+
+      await expect(service.grantLegacyPublicPageAccess()).resolves.toEqual({
+        buyers: 2,
+        granted: 1,
+        failed: 0,
+      });
+    });
+
+    it('بدون خریدار قبلی هیچ تماسی با سرویس اشتراک گرفته نمی‌شود', async () => {
+      const { service, userSubscriptionService } = createService();
+
+      await expect(service.grantLegacyPublicPageAccess()).resolves.toEqual({
+        buyers: 0,
+        granted: 0,
+        failed: 0,
+      });
+      expect(
+        userSubscriptionService.grantLegacyPublicPageAccess,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('اگر پلن مهلت انتقالی seed نشده باشد، در همان کاربر اول متوقف می‌شود و بقیه ناموفق شمرده می‌شوند', async () => {
+      const { service, userSubscriptionService } = createService({
+        legacyPurchases: [{ userId: 7 }, { userId: 9 }, { userId: 11 }],
+        legacyGrant: () => null,
+      });
+
+      await expect(service.grantLegacyPublicPageAccess()).resolves.toEqual({
+        buyers: 3,
+        granted: 0,
+        failed: 3,
+      });
+      expect(
+        userSubscriptionService.grantLegacyPublicPageAccess,
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it('فقط با ENABLE_STARTUP_DATA_TASKS هنگام بوت اجرا می‌شود و خطا بوت را متوقف نمی‌کند', async () => {
+      const previous = process.env.ENABLE_STARTUP_DATA_TASKS;
+      try {
+        process.env.ENABLE_STARTUP_DATA_TASKS = 'false';
+        const { service, purchaseRepo } = createService({
+          legacyPurchases: [{ userId: 7 }],
+        });
+        await service.onModuleInit();
+        expect(purchaseRepo.find).not.toHaveBeenCalled();
+
+        process.env.ENABLE_STARTUP_DATA_TASKS = 'true';
+        const { service: enabled, userSubscriptionService } = createService({
+          legacyPurchases: [{ userId: 7 }],
+        });
+        await enabled.onModuleInit();
+        expect(
+          userSubscriptionService.grantLegacyPublicPageAccess,
+        ).toHaveBeenCalledWith(7);
+
+        const { service: failing, purchaseRepo: failingRepo } = createService();
+        failingRepo.find.mockRejectedValue(new Error('db down'));
+        await expect(failing.onModuleInit()).resolves.toBeUndefined();
+      } finally {
+        if (previous === undefined) {
+          delete process.env.ENABLE_STARTUP_DATA_TASKS;
+        } else {
+          process.env.ENABLE_STARTUP_DATA_TASKS = previous;
+        }
+      }
+    });
   });
 });

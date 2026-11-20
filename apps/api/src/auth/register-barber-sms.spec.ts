@@ -1,3 +1,8 @@
+jest.mock('@nestjs/schedule', () => ({
+  Cron: () => () => undefined,
+  CronExpression: new Proxy({}, { get: () => '0 * * * *' }),
+}));
+
 import { SMS_TEMPLATES } from 'src/notification/sms-templates';
 
 import { AuthService } from './auth.service';
@@ -47,6 +52,13 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
     };
     const servicesService: any = { create: jest.fn() };
     const referralService: any = { createReferral: jest.fn() };
+    const userSubscriptionService: any = {
+      grantFreePublicPageTrial: jest.fn().mockResolvedValue({
+        subscription: { id: 'sub-trial-1' },
+        created: true,
+      }),
+      claimFreeTrialSms: jest.fn().mockResolvedValue(true),
+    };
     const dataSource: any = {
       transaction: jest.fn((callback: any) => callback({})),
     };
@@ -57,6 +69,7 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
       sendBarberProfileSubmittedToBarber: jest
         .fn()
         .mockResolvedValue(undefined),
+      sendPublicPageFreeTrialToBarber: jest.fn().mockResolvedValue(undefined),
     };
     const baleNotificationService: any = {
       notifyBarberRegistered: jest.fn().mockResolvedValue(undefined),
@@ -69,6 +82,7 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
       barberProfileService,
       servicesService,
       referralService,
+      userSubscriptionService,
       dataSource,
       {} as any, // session revocation is not used during registration
       baleNotificationService,
@@ -77,7 +91,14 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
 
     const response: any = { cookie: jest.fn() };
 
-    return { service, response, bookingSmsService, createdUser };
+    return {
+      service,
+      response,
+      bookingSmsService,
+      createdUser,
+      userSubscriptionService,
+      referralService,
+    };
   }
 
   it('بعد از ثبت‌نام، پیامک قالب 573804 با نام آرایشگر برای خودش ارسال می‌شود', async () => {
@@ -113,5 +134,83 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
     const result = await service.registerBarber(dto, response);
 
     expect(result.message).toContain('ثبت‌نام آرایشگر');
+  });
+
+  it('پس از ثبت‌نام موفق، دورهٔ رایگان پروفایل اختصاصی برای کاربر جدید اعطا می‌شود', async () => {
+    const { service, response, userSubscriptionService } = buildHarness();
+
+    await service.registerBarber(dto, response);
+
+    expect(
+      userSubscriptionService.grantFreePublicPageTrial,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      userSubscriptionService.grantFreePublicPageTrial,
+    ).toHaveBeenCalledWith(42, expect.anything());
+  });
+
+  it('در صورت اعطای تازهٔ دورهٔ رایگان، پیامک فعال‌شدن برای آرایشگر ارسال می‌شود', async () => {
+    const { service, response, bookingSmsService } = buildHarness();
+
+    await service.registerBarber(dto, response);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(
+      bookingSmsService.sendPublicPageFreeTrialToBarber,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      bookingSmsService.sendPublicPageFreeTrialToBarber,
+    ).toHaveBeenCalledWith('09121234567', {
+      barberName: dto.fullName,
+    });
+  });
+
+  it('اگر دورهٔ رایگان تازه اعطا نشده باشد (کاربر تکراری)، پیامک رایگان ارسال نمی‌شود', async () => {
+    const { service, response, bookingSmsService, userSubscriptionService } =
+      buildHarness();
+    userSubscriptionService.grantFreePublicPageTrial.mockResolvedValue({
+      subscription: { id: 'sub-existing' },
+      created: false,
+    });
+
+    await service.registerBarber(dto, response);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(
+      bookingSmsService.sendPublicPageFreeTrialToBarber,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('اگر claim پیامک رایگان گرفته نشود، پیامک تکراری ارسال نمی‌شود', async () => {
+    const { service, response, bookingSmsService, userSubscriptionService } =
+      buildHarness();
+    userSubscriptionService.claimFreeTrialSms.mockResolvedValue(false);
+
+    await service.registerBarber(dto, response);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(
+      bookingSmsService.sendPublicPageFreeTrialToBarber,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('خطای پیامک دورهٔ رایگان ثبت‌نام را نمی‌شکند', async () => {
+    const { service, response, bookingSmsService } = buildHarness();
+    bookingSmsService.sendPublicPageFreeTrialToBarber.mockRejectedValue(
+      new Error('SMS gateway down'),
+    );
+
+    await expect(service.registerBarber(dto, response)).resolves.toBeDefined();
+  });
+
+  it('با غیرفعال‌بودن سیستم کد معرف، ثبت‌نام با کد معرف رد می‌شود', async () => {
+    delete process.env.ENABLE_REFERRAL;
+    const { service, response, referralService } = buildHarness();
+
+    await expect(
+      service.registerBarber({ ...dto, referralCode: 'ABC12345' }, response),
+    ).rejects.toThrow(/کد معرف/);
+
+    expect(referralService.createReferral).not.toHaveBeenCalled();
   });
 });

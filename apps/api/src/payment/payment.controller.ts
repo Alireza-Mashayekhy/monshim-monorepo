@@ -42,7 +42,7 @@ export class PaymentController {
     );
   }
 
-  // ۱.۱. خرید پکیج «صفحهٔ عمومی آرایشگاه» (یک‌باره)
+  // ۱.۱. خرید/تمدید اشتراک «پروفایل اختصاصی»
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.Barber, Role.Admin)
   @Post('public-page')
@@ -52,8 +52,8 @@ export class PaymentController {
   ) {
     return this.paymentService.initiatePublicPagePayment(
       req.user.id,
-      dto?.discountCode,
       getRequestOrigin(req),
+      dto?.planId,
     );
   }
 

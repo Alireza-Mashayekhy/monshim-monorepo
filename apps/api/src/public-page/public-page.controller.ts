@@ -27,6 +27,7 @@ import { PublicPageService } from './public-page.service';
  *   • `GET /public-page/directory`         → آرایشگرهای فعالِ دارای اسلاگ (مبنای sitemap)
  *   • `GET /public-page/barber/:identifier` → پروفایل عمومی بر اساس اسلاگ؛ در غیر این صورت ۴۰۴
  *   • `GET /public-page/me`                → وضعیت صفحهٔ عمومیِ آرایشگرِ جاری
+ *   • `GET /public-page/plans`             → پلن‌های خرید/تمدید اشتراک پروفایل اختصاصی
  *   • `GET /public-page/slug/check`        → بررسی معتبر و غیرتکراری بودن اسلاگ
  *   • `PATCH /public-page/me/slug`         → ثبت **یک‌بارهٔ** اسلاگ صفحهٔ عمومی (غیرقابل تغییر)
  */
@@ -67,6 +68,19 @@ export class PublicPageController {
   @Get('me')
   getMyStatus(@Req() req: any) {
     return this.publicPageService.getStatusByUserId(req.user.id);
+  }
+
+  /**
+   * پلن‌های قابل انتخاب برای خرید/تمدید پروفایل اختصاصی.
+   *
+   * قیمت‌ها از بک‌اند می‌آیند و فرانت فقط نمایش می‌دهد؛ مقدار نهایی پرداخت
+   * هم در بک‌اند از همین پلن محاسبه می‌شود.
+   */
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.Barber, Role.Admin)
+  @Get('plans')
+  getPublicPagePlans() {
+    return this.publicPageService.getPublicPagePlans();
   }
 
   @UseGuards(AuthGuard, RolesGuard)

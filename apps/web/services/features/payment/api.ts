@@ -19,11 +19,16 @@ export async function paySubscription(dto: InitiateSubscriptionPaymentDto) {
   return data;
 }
 
-// درخواست خرید پکیج «صفحهٔ عمومی آرایشگاه» با درگاه زیبال
-export async function payPublicPage(discountCode?: string) {
+/**
+ * درخواست خرید/تمدید اشتراک «صفحهٔ اختصاصی» با درگاه زیبال.
+ *
+ * فقط `planId` ارسال می‌شود و قیمت نهایی همیشه در بک‌اند از روی همان پلن
+ * محاسبه می‌شود؛ فرانت هیچ قیمت/تخفیفی نمی‌فرستد.
+ */
+export async function payPublicPage(options: { planId: string }) {
   const { data } = await api.post<ApiSingleResponse<InitiatePaymentResponse>>(
     endpoints.payment.publicPage,
-    discountCode ? { discountCode } : {},
+    { planId: options.planId },
   );
   return data;
 }

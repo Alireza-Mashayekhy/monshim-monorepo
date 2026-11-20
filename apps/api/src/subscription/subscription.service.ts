@@ -3,7 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { In, Repository } from 'typeorm';
 
-import { SUBSCRIPTION_PLANS } from './constants';
+import {
+  PUBLIC_PAGE_PLAN_TYPE,
+  PUBLIC_PAGE_PURCHASE_PLAN_KEYS,
+  SMS_PLAN_TYPE,
+  SUBSCRIPTION_PLANS,
+} from './constants';
 import { UpdateSubscriptionPlanDto } from './dto/update-subscription.dto';
 import { SubscriptionPlan } from './entities/subscription-plan.entity';
 
@@ -33,6 +38,7 @@ export class SubscriptionService implements OnModuleInit {
         existing.description = definition.description;
         existing.durationDays = definition.durationDays;
         existing.sortOrder = definition.sortOrder;
+        existing.planType = definition.planType;
         existing.isActive = true;
 
         await this.subscriptionPlanRepo.save(existing);
@@ -48,6 +54,7 @@ export class SubscriptionService implements OnModuleInit {
         description: definition.description,
         isActive: true,
         sortOrder: definition.sortOrder,
+        planType: definition.planType,
       });
 
       await this.subscriptionPlanRepo.save(plan);
@@ -85,6 +92,64 @@ export class SubscriptionService implements OnModuleInit {
         price: 'ASC',
       },
     });
+  }
+
+  /**
+   * پلن‌های فعالِ اشتراک پیامکی — همان پلن‌هایی که صفحهٔ «اشتراک» در
+   * داشبورد نمایش می‌دهد. پلن‌های پروفایل اختصاصی اینجا نیستند.
+   */
+  async findActiveSmsPlans() {
+    return this.subscriptionPlanRepo.find({
+      where: {
+        isActive: true,
+        planType: SMS_PLAN_TYPE,
+      },
+      order: {
+        sortOrder: 'ASC',
+        price: 'ASC',
+      },
+    });
+  }
+
+  /**
+   * پلن‌های قابل انتخاب برای خرید/تمدید «پروفایل اختصاصی».
+   *
+   * پلن دورهٔ رایگان عمداً اینجا نیست: آن پلن فقط یک‌بار و خودکار پس از
+   * ثبت‌نام اعطا می‌شود و قابل خرید نیست.
+   */
+  async findPublicPagePurchasePlans() {
+    return this.subscriptionPlanRepo.find({
+      where: {
+        isActive: true,
+        planType: PUBLIC_PAGE_PLAN_TYPE,
+        planKey: In([...PUBLIC_PAGE_PURCHASE_PLAN_KEYS]),
+      },
+      order: {
+        sortOrder: 'ASC',
+        price: 'ASC',
+      },
+    });
+  }
+
+  /** پلن قابل خرید/تمدید پروفایل اختصاصی را بر اساس شناسه پیدا می‌کند. */
+  async findPublicPagePurchasePlan(
+    id: string,
+  ): Promise<SubscriptionPlan | null> {
+    const plan = await this.subscriptionPlanRepo.findOne({ where: { id } });
+
+    if (
+      !plan ||
+      !plan.isActive ||
+      plan.planType !== PUBLIC_PAGE_PLAN_TYPE ||
+      !plan.planKey ||
+      !(PUBLIC_PAGE_PURCHASE_PLAN_KEYS as readonly string[]).includes(
+        plan.planKey,
+      )
+    ) {
+      return null;
+    }
+
+    return plan;
   }
 
   async findOne(id: string) {

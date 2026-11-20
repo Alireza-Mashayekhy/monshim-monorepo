@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,6 +14,7 @@ import {
   ACTIVE_BOOKING_STATUSES,
   Booking,
 } from 'src/booking/entities/booking.entity';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { isDuplicateEntryError } from 'src/common/utils/db-error.util';
 import {
   DEFAULT_FRONT_ORIGIN,
@@ -28,11 +30,12 @@ import {
   notRefundedCondition,
 } from 'src/payment/payment-ledger';
 import { Referral } from 'src/referral/entities/referral.entity';
+import { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
+import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { Brackets, In, IsNull, Repository, SelectQueryBuilder } from 'typeorm';
 
 import {
-  PUBLIC_PAGE_PACKAGE_PRICE_TOMANS,
-  PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS,
+  PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
   PublicPageActivationReason,
   REFERRAL_PUBLIC_PAGE_DISCOUNT_PERCENT,
 } from './constants';
@@ -45,14 +48,6 @@ import { validatePublicPageSlug } from './slug.util';
 export interface PublicPageStatus {
   isActive: boolean;
   reason: PublicPageActivationReason | null;
-  /** تعداد رزروهای موفقی که در درگاه پرداخت شده و لغو/برگشت نشده‌اند */
-  paidBookingsCount: number;
-  /** حد نصاب رزروهای موفق برای فعال‌سازی رایگان */
-  requiredPaidBookings: number;
-  /** قیمت پکیج به تومان */
-  packagePriceTomans: number;
-  /** زمان خرید پکیج (در صورت خرید) */
-  purchasedAt: string | null;
   /** اسلاگ یکتای انتخاب‌شده توسط آرایشگر */
   slug: string | null;
   /**
@@ -71,6 +66,22 @@ export interface PublicPageStatus {
   isPubliclyVisible: boolean;
   /** آیا خرید صفحه برای این آرایشگر مشمول تخفیف ویژهٔ ثبت‌نام با کد معرف است؟ */
   hasReferralDiscount: boolean;
+  /**
+   * اشتراک فعال «پروفایل اختصاصی» (دورهٔ رایگان، مهلت انتقالی یا پلن تمدید
+   * پولی). تنها مسیر فعال‌سازی صفحه همین است.
+   */
+  subscription: {
+    id: string;
+    planId: string;
+    planKey: string | null;
+    planName: string;
+    /** آیا این اشتراک، دورهٔ رایگان پس از ثبت‌نام است؟ */
+    isFreeTrial: boolean;
+    price: number;
+    startDate: string;
+    endDate: string;
+    status: string;
+  } | null;
 }
 
 export interface SlugAvailabilityResult {
@@ -84,8 +95,7 @@ export interface SlugAvailabilityResult {
 interface ActivationState {
   isActive: boolean;
   reason: PublicPageActivationReason | null;
-  purchase: BarberPublicPagePurchase | null;
-  paidBookingsCount: number;
+  subscription: UserSubscription | null;
 }
 
 interface DirectoryRow {
@@ -116,7 +126,7 @@ function toDate(value: unknown): Date | null {
 }
 
 @Injectable()
-export class PublicPageService {
+export class PublicPageService implements OnModuleInit {
   private readonly logger = new Logger(PublicPageService.name);
 
   constructor(
@@ -137,7 +147,29 @@ export class PublicPageService {
 
     private readonly barberService: BarberService,
     private readonly configService: ConfigService,
+    private readonly userSubscriptionService: UserSubscriptionService,
   ) {}
+
+  /**
+   * هنگام بوت، خریداران قبلی پکیج را به مدل اشتراک منتقل می‌کنیم.
+   *
+   * بعد از `SubscriptionService.onModuleInit` (seed پلن‌ها) اجرا می‌شود چون
+   * `SubscriptionModule` قبل از این ماژول ساخته می‌شود. اگر پلن seed نشده
+   * باشد، متد فقط هشدار می‌دهد و در بوت بعدی دوباره تلاش می‌کند.
+   */
+  async onModuleInit() {
+    if (!isRuntimeFlagEnabled('ENABLE_STARTUP_DATA_TASKS')) {
+      return;
+    }
+
+    try {
+      await this.grantLegacyPublicPageAccess();
+    } catch (error) {
+      this.logger.error(
+        `انتقال خریداران قبلی صفحهٔ اختصاصی انجام نشد: ${String(error)}`,
+      );
+    }
+  }
 
   private publicUrl(slug: string) {
     // فقط origin استفاده می‌شود تا مقدار اضافه‌ای مثل `/panel` در FRONTEND_URL
@@ -189,14 +221,6 @@ export class PublicPageService {
         salonName: true,
         slug: true,
       },
-    });
-  }
-
-  /** آیا پکیج برای این پروفایل خریده شده است؟ */
-  private async findPurchase(barberProfileId: string) {
-    return this.purchaseRepo.findOne({
-      where: { barberProfileId },
-      order: { createdAt: 'DESC' },
     });
   }
 
@@ -252,11 +276,12 @@ export class PublicPageService {
     return this.applySuccessfulGatewayPaidBookingsFilter(qb).getCount();
   }
 
-  private countPaidBookings(barberProfileId: string) {
-    return this.countSuccessfulPaidBookings(barberProfileId);
-  }
-
-  /** صفحه باید واقعاً خریداری شده باشد؛ فعال‌شدن رایگان با رزرو جای خرید را نمی‌گیرد. */
+  /**
+   * آیا کاربر پیش‌تر «پروفایل اختصاصی» را خریده است؟
+   *
+   * فقط برای پاداش دعوت‌های قبلی استفاده می‌شود (پکیج یک‌باره دیگر فروخته
+   * نمی‌شود). رکوردهای خرید قبلی دست‌نخورده باقی می‌مانند.
+   */
   async hasPurchasedPackageByUserId(userId: number): Promise<boolean> {
     const profile = await this.profileRepo.findOne({
       where: { userId },
@@ -272,8 +297,19 @@ export class PublicPageService {
     );
   }
 
-  /** فقط حساب‌هایی که واقعاً با کد معرف ثبت شده‌اند، مشمول تخفیف هستند. */
+  /**
+   * تخفیف ۵۰٪ی خرید صفحهٔ اختصاصی برای کاربران دعوت‌شده.
+   *
+   * این تخفیف به‌صورت موقت غیرفعال است و فقط با feature flag
+   * `ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT` می‌تواند روشن شود. حتی در حالت
+   * روشن هم فقط حساب‌هایی که واقعاً با کد معرف ثبت شده‌اند مشمول تخفیف
+   * هستند.
+   */
   async hasReferralDiscount(userId: number): Promise<boolean> {
+    if (!isRuntimeFlagEnabled('ENABLE_REFERRAL_PUBLIC_PAGE_DISCOUNT', false)) {
+      return false;
+    }
+
     return (
       (await this.referralRepo.count({ where: { referredUserId: userId } })) > 0
     );
@@ -283,37 +319,35 @@ export class PublicPageService {
     if (!(await this.hasReferralDiscount(userId))) return null;
 
     const discountAmount = Math.round(
-      (PUBLIC_PAGE_PACKAGE_PRICE_TOMANS *
+      (PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS *
         REFERRAL_PUBLIC_PAGE_DISCOUNT_PERCENT) /
         100,
     );
     return {
       code: null,
       percentOff: REFERRAL_PUBLIC_PAGE_DISCOUNT_PERCENT,
-      originalAmount: PUBLIC_PAGE_PACKAGE_PRICE_TOMANS,
+      originalAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
       discountAmount,
-      amount: PUBLIC_PAGE_PACKAGE_PRICE_TOMANS - discountAmount,
+      amount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS - discountAmount,
     };
   }
 
   /**
-   * شرط فعال‌بودن: خرید پکیج **یا** رسیدن به حد نصاب رزروهای موفقِ پرداخت‌شده.
-   * همیشه هر دو را می‌خوانیم چون پنل آرایشگر باید تعداد رزروهای موفق را
-   * (حتی پس از خرید پکیج) نمایش بدهد.
+   * شرط فعال‌بودن صفحه: **فقط** اشتراک فعال «پروفایل اختصاصی».
+   *
+   * مسیرهای دائمی قبلی (خرید پکیج یک‌باره و ۳۰۰ رزرو موفق) حذف شده‌اند؛
+   * خریداران قبلی با مهلت انتقالی ۶ ماهه به همین مدل اشتراک منتقل می‌شوند.
    */
-  private async computeState(
-    barberProfileId: string,
-  ): Promise<ActivationState> {
-    const purchase = await this.findPurchase(barberProfileId);
-    const paidBookingsCount = await this.countPaidBookings(barberProfileId);
-    const reachedThreshold =
-      paidBookingsCount >= PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS;
+  private async computeState(userId: number): Promise<ActivationState> {
+    const subscription =
+      await this.userSubscriptionService.getCurrentPublicPageSubscription(
+        userId,
+      );
 
     return {
-      isActive: Boolean(purchase) || reachedThreshold,
-      reason: purchase ? 'PACKAGE' : reachedThreshold ? 'PAID_BOOKINGS' : null,
-      purchase,
-      paidBookingsCount,
+      isActive: Boolean(subscription),
+      reason: subscription ? 'SUBSCRIPTION' : null,
+      subscription,
     };
   }
 
@@ -323,6 +357,11 @@ export class PublicPageService {
     return this.buildStatus(profile);
   }
 
+  /** پلن‌های قابل انتخاب برای خرید/تمدید پروفایل اختصاصی. */
+  getPublicPagePlans() {
+    return this.userSubscriptionService.getPublicPagePlans();
+  }
+
   private async buildStatus(
     profile: PublicPageProfileRow | null,
     precomputedState?: ActivationState,
@@ -330,40 +369,49 @@ export class PublicPageService {
     const base: PublicPageStatus = {
       isActive: false,
       reason: null,
-      paidBookingsCount: 0,
-      requiredPaidBookings: PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS,
-      packagePriceTomans: PUBLIC_PAGE_PACKAGE_PRICE_TOMANS,
-      purchasedAt: null,
       slug: null,
       isSlugLocked: false,
       publicUrl: null,
       isApproved: false,
       isPubliclyVisible: true,
       hasReferralDiscount: false,
+      subscription: null,
     };
 
     if (!profile) return base;
 
     const [state, hasReferralDiscount] = await Promise.all([
-      precomputedState ?? this.computeState(profile.id),
+      precomputedState ?? this.computeState(profile.userId),
       this.hasReferralDiscount(profile.userId),
     ]);
     const slug = profile.slug?.trim() || null;
+    const subscription = state.subscription;
 
     return {
       ...base,
       isActive: state.isActive,
       reason: state.reason,
-      paidBookingsCount: state.paidBookingsCount,
-      purchasedAt: state.purchase?.createdAt
-        ? state.purchase.createdAt.toISOString()
-        : null,
       slug,
       isSlugLocked: Boolean(slug),
       publicUrl: state.isActive && slug ? this.publicUrl(slug) : null,
       isApproved: Boolean(profile.isApproved),
       isPubliclyVisible: profile.isPubliclyVisible !== false,
       hasReferralDiscount,
+      subscription: subscription
+        ? {
+            id: subscription.id,
+            planId: subscription.subscriptionPlanId,
+            planKey: subscription.subscriptionPlan?.planKey ?? null,
+            planName: subscription.subscriptionPlan?.name ?? '',
+            isFreeTrial:
+              subscription.subscriptionPlan?.price === 0 &&
+              subscription.price === 0,
+            price: Number(subscription.price),
+            startDate: subscription.startDate.toISOString(),
+            endDate: subscription.endDate.toISOString(),
+            status: subscription.status,
+          }
+        : null,
     };
   }
 
@@ -449,7 +497,7 @@ export class PublicPageService {
       throw new NotFoundException('پروفایل آرایشگر یافت نشد');
     }
 
-    const state = await this.computeState(profile.id);
+    const state = await this.computeState(profile.userId);
     if (!state.isActive) {
       throw new BadRequestException(
         'صفحهٔ اختصاصی شما هنوز فعال نشده است؛ پس از فعال‌سازی می‌توانید اسلاگ ثبت کنید',
@@ -527,21 +575,24 @@ export class PublicPageService {
     // صورت عدم احراز، ۴۰۴ پرتاب می‌کند.
     const barber = await this.barberService.findPublicOne(profile.userId);
 
-    // خرید پکیج اول بررسی می‌شود: در این صورت نیازی به شمارش نوبت‌ها نیست.
-    const purchase = await this.findPurchase(profile.id);
-    if (!purchase) {
-      const paidBookingsCount = await this.countPaidBookings(profile.id);
-      if (paidBookingsCount < PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS) {
-        throw new NotFoundException('صفحهٔ اختصاصی این آرایشگاه فعال نیست');
-      }
+    // تنها مسیر فعال‌سازی، اشتراک فعال «پروفایل اختصاصی» است.
+    const subscription =
+      await this.userSubscriptionService.getCurrentPublicPageSubscription(
+        profile.userId,
+      );
+
+    if (!subscription) {
+      throw new NotFoundException('صفحهٔ اختصاصی این آرایشگاه فعال نیست');
     }
+
+    const reason: PublicPageActivationReason = 'SUBSCRIPTION';
 
     return {
       ...barber,
       slug,
       publicPage: {
         isActive: true,
-        reason: purchase ? 'PACKAGE' : 'PAID_BOOKINGS',
+        reason,
         slug,
         url: this.publicUrl(slug),
       },
@@ -659,28 +710,32 @@ export class PublicPageService {
     const profileIds = [...profileMetaById.keys()];
     if (profileIds.length === 0) return [];
 
-    const purchases = await this.purchaseRepo
-      .createQueryBuilder('purchase')
-      .select('purchase.barberProfileId', 'barberProfileId')
-      .addSelect('MAX(purchase.createdAt)', 'updatedAt')
-      .where('purchase.barberProfileId IN (:...profileIds)', { profileIds })
-      .groupBy('purchase.barberProfileId')
-      .getRawMany<DirectoryRow>();
+    // اشتراک فعال پروفایل اختصاصی (دورهٔ رایگان، مهلت انتقالی یا پلن تمدید
+    // پولی) تنها شرط نمایش است. `userId` را به `barberProfileId` نگاشت
+    // می‌کنیم تا همان `updatedAtByProfileId` مشترک باقی بماند.
+    const profileIdByUserId = new Map<number, string>();
+    for (const profile of profiles) {
+      profileIdByUserId.set(profile.userId, profile.id);
+    }
 
-    const qualifiedQb = this.bookingRepo
-      .createQueryBuilder('booking')
-      .select('booking.barberId', 'barberProfileId')
-      .addSelect('MAX(booking.updatedAt)', 'updatedAt')
-      .where('booking.barberId IN (:...profileIds)', { profileIds });
+    const subscriptions =
+      await this.userSubscriptionService.findActivePublicPageSubscriptionsForUsers(
+        eligibleUserIds,
+      );
+    const subscriptionRows: DirectoryRow[] = subscriptions.flatMap(
+      subscription => {
+        const barberProfileId = profileIdByUserId.get(subscription.userId);
 
-    const qualified = await this.applySuccessfulGatewayPaidBookingsFilter(
-      qualifiedQb,
-    )
-      .groupBy('booking.barberId')
-      .having('COUNT(booking.id) >= :required', {
-        required: PUBLIC_PAGE_REQUIRED_PAID_BOOKINGS,
-      })
-      .getRawMany<DirectoryRow>();
+        return barberProfileId
+          ? [
+              {
+                barberProfileId,
+                updatedAt: subscription.endDate,
+              },
+            ]
+          : [];
+      },
+    );
 
     const updatedAtByProfileId = new Map<string, Date | null>();
     const register = (rows: DirectoryRow[]) => {
@@ -696,11 +751,10 @@ export class PublicPageService {
         }
       }
     };
-    register(purchases);
-    register(qualified);
+    register(subscriptionRows);
 
-    // توجه: `updatedAtByProfileId` فقط برای تعیین **واجد شرایط بودن** (خرید
-    // پکیج یا ۳۰۰ رزرو پرداخت‌شده) استفاده می‌شود، نه برای `lastmod`.
+    // توجه: `updatedAtByProfileId` فقط برای تعیین **واجد شرایط بودن** (اشتراک
+    // فعال پروفایل اختصاصی) استفاده می‌شود، نه برای `lastmod`.
     // `lastmod` را از `contentUpdatedAt` می‌گیریم تا رزروهای جدید باعث
     // «تازه‌شدن» بی‌دلیل صفحه در sitemap نشوند.
     return [...updatedAtByProfileId.entries()]
@@ -867,45 +921,68 @@ export class PublicPageService {
       throw new BadRequestException('کد تخفیف نامعتبر یا غیرفعال است');
 
     const discountAmount = Math.round(
-      (PUBLIC_PAGE_PACKAGE_PRICE_TOMANS * discount.percentOff) / 100,
+      (PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS * discount.percentOff) / 100,
     );
     return {
       code: discount.code,
       percentOff: discount.percentOff,
-      originalAmount: PUBLIC_PAGE_PACKAGE_PRICE_TOMANS,
+      originalAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
       discountAmount,
-      amount: PUBLIC_PAGE_PACKAGE_PRICE_TOMANS - discountAmount,
+      amount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS - discountAmount,
     };
   }
 
   /**
-   * فعال‌سازی صفحهٔ عمومی پس از پرداخت موفق پکیج.
-   * نسبت به کال‌بک‌های تکراریِ درگاه باید idempotent باشد.
+   * انتقال خریداران قبلی پکیج به مدل اشتراک — یک‌بار و خودکار هنگام بوت.
+   *
+   * هر خریدار پکیجٔ یک‌بارهٔ سابق ۶ ماه (۱۸۰ روز) اعتبار «پروفایل اختصاصی»
+   * می‌گیرد. متد idempotent است: اگر کاربر هر اشتراک `public_page` داشته
+   * باشد (حتی دورهٔ رایگان یا پلن پولی) چیزی ساخته نمی‌شود. رکوردهای خرید
+   * قبلی دست‌نخورده باقی می‌مانند.
    */
-  async activateAfterPayment(payment: Payment) {
-    const existing = payment.id
-      ? await this.purchaseRepo.findOne({
-          where: { paymentId: payment.id },
-        })
-      : null;
-    if (existing) return existing;
+  async grantLegacyPublicPageAccess(): Promise<{
+    buyers: number;
+    granted: number;
+    failed: number;
+  }> {
+    const purchases = await this.purchaseRepo.find({
+      select: { userId: true },
+    });
+    const userIds = [...new Set(purchases.map(row => row.userId))];
 
-    const profile = await this.findProfileByUserId(payment.userId);
-    if (!profile) {
-      throw new NotFoundException('پروفایل آرایشگر برای خرید صفحه یافت نشد');
+    if (userIds.length === 0) {
+      return { buyers: 0, granted: 0, failed: 0 };
     }
 
-    const purchase = this.purchaseRepo.create({
-      userId: payment.userId,
-      barberProfileId: profile.id,
-      amount: Number(payment.amount ?? PUBLIC_PAGE_PACKAGE_PRICE_TOMANS),
-      paymentId: payment.id ?? null,
-    });
+    let granted = 0;
+    let failed = 0;
 
-    const saved = await this.purchaseRepo.save(purchase);
-    this.logger.log(
-      `Public page activated for barber user ${payment.userId} (payment ${payment.orderId})`,
-    );
-    return saved;
+    for (const [index, userId] of userIds.entries()) {
+      const result =
+        await this.userSubscriptionService.grantLegacyPublicPageAccess(userId);
+
+      if (result === null) {
+        // پلن مهلت انتقالی seed نشده؛ ادامه‌دادن فقط لاگ تکراری تولید می‌کند.
+        failed = userIds.length - index;
+        break;
+      }
+
+      if (result.created) granted += 1;
+    }
+
+    if (granted > 0) {
+      this.logger.log(
+        `مهلت انتقالی ۶ ماههٔ پروفایل اختصاصی برای ${granted} خریدار قبلی فعال شد`,
+      );
+    }
+
+    if (failed > 0) {
+      this.logger.warn(
+        'پلن «مهلت انتقالی خریداران قبلی» یافت نشد؛ انتقال خریداران قبلی انجام نشد. ' +
+          'پلن‌ها را seed کنید (ENABLE_STARTUP_DATA_TASKS) و بک‌اند را دوباره بالا بیاورید.',
+      );
+    }
+
+    return { buyers: userIds.length, granted, failed };
   }
 }
