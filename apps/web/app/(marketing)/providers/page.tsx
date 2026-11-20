@@ -59,7 +59,18 @@ export async function generateMetadata({
   searchParams,
 }: PageProps): Promise<Metadata> {
   const { page: rawPage } = await searchParams;
-  const page = parsePage(rawPage);
+  const requestedPage = parsePage(rawPage);
+
+  // canonical باید به صفحهٔ واقعی (پس از clamp بک‌اند به `totalPages`) اشاره
+  // کند، نه شمارهٔ درخواستی که ممکن است از آخرین صفحه بزرگ‌تر باشد. در آن
+  // حالت محتوای صفحهٔ آخر زیر URLِ `?page=999` با canonicalِ خودش نمایش داده
+  // می‌شد — سیگنال محتوای تکراری برای گوگل. fetch کش‌شده است
+  // (`revalidate: 300` + تگ مشترک) پس فراخوانی دوم در کامپوننت صفحه هزینه‌ای
+  // ندارد. اگر API در دسترس نباشد، به شمارهٔ درخواستی برمی‌گردیم.
+  const result = await fetchPublicApi<PublicDirectoryPage>(
+    `/public-page/directory/page?page=${requestedPage}&perPage=${PER_PAGE}`,
+  );
+  const page = result?.pagination?.page ?? requestedPage;
 
   return buildPageMetadata({
     title: page > 1 ? `${PAGE_TITLE} — صفحهٔ ${toPersianDigits(page)}` : PAGE_TITLE,

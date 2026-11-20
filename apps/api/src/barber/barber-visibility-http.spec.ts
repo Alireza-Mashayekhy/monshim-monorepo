@@ -45,6 +45,9 @@ describe('admin barber visibility and login over HTTP', () => {
   let profileRepo: any;
   let queries: string[][];
   let webhook: { notifyBarberProfileChanged: jest.Mock };
+  // رکوردهای اشتراک public_page برای تست ستون «اشتراک صفحهٔ اختصاصی» در
+  // فهرست مدیریت؛ هر تست می‌تواند آن را تنظیم کند.
+  let subscriptionRecords: any[];
 
   const phoneBarber = '09121234567';
   const phoneAdmin = '09120000000';
@@ -183,6 +186,11 @@ describe('admin barber visibility and login over HTTP', () => {
       undefined,
       undefined,
       webhook as any,
+      {
+        findPublicPageSubscriptionsForUsers: jest.fn(async (ids: number[]) =>
+          (subscriptionRecords ?? []).filter(row => ids.includes(row.userId)),
+        ),
+      } as any,
     );
     const users = {
       findOne: jest.fn((id: number) =>
@@ -250,6 +258,7 @@ describe('admin barber visibility and login over HTTP', () => {
   });
 
   beforeEach(() => {
+    subscriptionRecords = [];
     Object.assign(profile, {
       id: 'barber-profile-42',
       userId: 42,
@@ -519,5 +528,46 @@ describe('admin barber visibility and login over HTTP', () => {
     expect(profile.isPubliclyVisible).toBe(true);
     expect(profileRepo.update).not.toHaveBeenCalled();
     expect(userRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('management list shows the real public-page subscription (or null when none)', async () => {
+    const adminCookie = await login(phoneAdmin);
+
+    // بدون هیچ رکوردی از نوع public_page
+    subscriptionRecords = [];
+    const without = await request(app.getHttpServer())
+      .get('/api/admin/barber/management')
+      .set('Cookie', adminCookie)
+      .expect(200);
+    expect(without.body.data[0].publicPageSubscription).toBeNull();
+
+    // اشتراک رایگان فعال برای همین آرایشگر
+    subscriptionRecords = [
+      {
+        id: 'sub-admin-test',
+        userId: 42,
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          id: 'plan-trial',
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+          planType: 'public_page',
+        },
+        price: 0,
+        status: 'active',
+        startDate: new Date(Date.now() - 5 * 86_400_000),
+        endDate: new Date(Date.now() + 25 * 86_400_000),
+      },
+    ];
+    const withActive = await request(app.getHttpServer())
+      .get('/api/admin/barber/management')
+      .set('Cookie', adminCookie)
+      .expect(200);
+    expect(withActive.body.data[0].publicPageSubscription).toMatchObject({
+      planKey: 'public_page_trial',
+      isFreeTrial: true,
+      display: 'active',
+    });
   });
 });

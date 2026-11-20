@@ -16,6 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useDebounce } from '@/hooks/use-debounce';
+import { toPersianDigits } from '@/lib/utils';
 import {
   useAdminBarberManagementList,
   useDeleteBarberProfile,
@@ -23,11 +24,73 @@ import {
   useSetBarberActive,
 } from '@/services/features/barber/admin.hooks';
 import type { BarberResponse } from '@/services/features/barber/types';
+import type { PublicPageSubscriptionStatus } from '@/services/features/public-page/types';
 
 type BarberAction =
   | { type: 'deactivate' | 'activate'; barber: BarberResponse }
   | { type: 'restore-account'; barber: BarberResponse }
   | { type: 'delete'; barber: BarberResponse };
+
+function formatFaDate(iso: string) {
+  return toPersianDigits(new Date(iso).toLocaleDateString('fa-IR'));
+}
+
+/**
+ * «اشتراک صفحهٔ اختصاصی» هر ردیف در مدیریت آرایشگرها.
+ * منبع: همان خلاصهٔ مرکزی بک‌اند (`summarizePublicPageSubscriptions`) —
+ * رایگان/پولی، فعال/صف‌شده/منقضی و تاریخ پایان واقعی.
+ */
+function renderPublicPageSubscription(
+  subscription: PublicPageSubscriptionStatus | null | undefined,
+) {
+  if (!subscription) {
+    return (
+      <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">
+        بدون اشتراک
+      </span>
+    );
+  }
+
+  const kind = subscription.isFreeTrial ? 'رایگان' : 'پلن پولی';
+  const endText = `تا ${formatFaDate(subscription.endDate)}`;
+
+  if (subscription.display === 'active') {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="w-fit rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+          فعال · {kind}
+        </span>
+        <span className="text-xs text-muted-foreground">{endText}</span>
+      </div>
+    );
+  }
+
+  if (subscription.display === 'scheduled') {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="w-fit rounded-full bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">
+          در انتظار شروع · {kind}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          از {formatFaDate(subscription.startDate)} تا{' '}
+          {formatFaDate(subscription.endDate)}
+        </span>
+      </div>
+    );
+  }
+
+  // display === 'expired'
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="w-fit rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+        منقضی · {kind}
+      </span>
+      <span className="text-xs text-muted-foreground">
+        پایان: {formatFaDate(subscription.endDate)}
+      </span>
+    </div>
+  );
+}
 
 export default function AdminBarbersPage() {
   const [page, setPage] = useState(1);
@@ -130,6 +193,7 @@ export default function AdminBarbersPage() {
               <TableHead>شهر</TableHead>
               <TableHead>وضعیت پروفایل</TableHead>
               <TableHead>وضعیت نمایش</TableHead>
+              <TableHead>اشتراک صفحهٔ اختصاصی</TableHead>
               <TableHead className="min-w-52">عملیات</TableHead>
             </TableRow>
           </TableHeader>
@@ -137,7 +201,7 @@ export default function AdminBarbersPage() {
             {isLoading ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="py-10 text-center text-muted-foreground"
                 >
                   در حال دریافت فهرست آرایشگرها…
@@ -146,7 +210,7 @@ export default function AdminBarbersPage() {
             ) : isError ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="py-10 text-center text-destructive"
                 >
                   دریافت فهرست آرایشگرها ناموفق بود. صفحه را بازخوانی کنید.
@@ -155,7 +219,7 @@ export default function AdminBarbersPage() {
             ) : barbers.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="py-10 text-center text-muted-foreground"
                 >
                   آرایشگری پیدا نشد.
@@ -204,6 +268,9 @@ export default function AdminBarbersPage() {
                         {barber.isAdminAccount ? ' (دارای نقش مدیر)' : ''}
                       </p>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    {renderPublicPageSubscription(barber.publicPageSubscription)}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-2">

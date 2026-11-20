@@ -149,6 +149,8 @@ describe('PublicPageService', () => {
     paidBookingsCount?: number;
     qualifiedRows?: any[];
     directorySubscriptions?: any[];
+    /** رکوردهای «هر وضعیت» برای ساخت `lastSubscription` (فقط وقتی اشتراک فعالی نیست استفاده می‌شود) */
+    latestSubscriptions?: any[];
     duplicateDbError?: boolean;
     updateAffected?: number;
     discount?: any;
@@ -242,6 +244,9 @@ describe('PublicPageService', () => {
       findActivePublicPageSubscriptionsForUsers: jest
         .fn()
         .mockResolvedValue(params?.directorySubscriptions ?? []),
+      findPublicPageSubscriptionsForUsers: jest
+        .fn()
+        .mockResolvedValue(params?.latestSubscriptions ?? []),
       grantLegacyPublicPageAccess: jest.fn((userId: number) =>
         Promise.resolve(
           params?.legacyGrant ? params.legacyGrant(userId) : { created: true },
@@ -291,12 +296,52 @@ describe('PublicPageService', () => {
     });
 
     const status = await service.getStatusByUserId(42);
+    expect(status.lastSubscription).toBeNull();
     expect(status.isActive).toBe(false);
     expect(status.reason).toBeNull();
     expect(status.publicUrl).toBeNull();
 
     // مسیر رزرو/خرید حذف شده است و دیگر باعث فعال‌شدن نمی‌شود.
     expect(bookingQb.andWhere).not.toHaveBeenCalled();
+  });
+
+  it('اشتراک منقضی‌شده: lastSubscription با تاریخ پایان نمایش داده می‌شود ولی صفحه فعال نیست', async () => {
+    const { service } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      latestSubscriptions: [
+        {
+          id: 'sub-old',
+          userId: 42,
+          subscriptionPlanId: 'plan-trial',
+          subscriptionPlan: {
+            planKey: 'public_page_trial',
+            name: 'پروفایل اختصاصی رایگان',
+            price: 0,
+            planType: 'public_page',
+          },
+          price: 0,
+          startDate: new Date('2026-09-01T00:00:00Z'),
+          endDate: new Date('2026-10-01T00:00:00Z'),
+          status: 'expired',
+        },
+      ],
+    });
+
+    const status = await service.getStatusByUserId(42);
+    expect(status.isActive).toBe(false);
+    expect(status.subscription).toBeNull();
+    expect(status.lastSubscription).toMatchObject({
+      id: 'sub-old',
+      display: 'expired',
+      isFreeTrial: true,
+      planName: 'پروفایل اختصاصی رایگان',
+    });
   });
 
   it('با اشتراک فعال پروفایل اختصاصی، صفحه با دلیل SUBSCRIPTION فعال می‌شود', async () => {
@@ -742,6 +787,43 @@ describe('PublicPageService', () => {
     const page = await withSlug.getPublicBarberPage('aria-salon');
     expect(page.slug).toBe('aria-salon');
     expect(page.publicPage.url).toBe('https://monshiim.ir/provider/aria-salon');
+  });
+
+  it('صفحهٔ عمومی بدون هیچ خدمت فعالی ۴۰۴ می‌دهد تا با منطق sitemap/دایرکتوری هم‌سو بماند', async () => {
+    const { service, barberService } = createService({
+      profile: {
+        id: 'prof-1',
+        userId: 42,
+        isApproved: true,
+        salonName: 'سالن آریا',
+        slug: 'aria-salon',
+      },
+      subscription: {
+        id: 'sub-1',
+        subscriptionPlanId: 'plan-trial',
+        subscriptionPlan: {
+          planKey: 'public_page_trial',
+          name: 'پروفایل اختصاصی رایگان',
+          price: 0,
+        },
+        price: 0,
+        startDate: new Date('2026-11-01T00:00:00Z'),
+        endDate: new Date('2026-12-01T00:00:00Z'),
+        status: 'ACTIVE',
+      },
+    });
+    // `getPublicDirectory()` (مبنای sitemap و /providers) فقط آرایشگرهای دارای
+    // حداقل یک خدمت فعال را برمی‌گرداند؛ صفحهٔ عمومی هم نباید برای همان حالت
+    // ۲۰۰ بدهد (صفحهٔ نازکِ خارج از sitemap).
+    barberService.findPublicOne.mockResolvedValueOnce({
+      id: 42,
+      salonName: 'سالن آریا',
+      services: [],
+    });
+
+    await expect(
+      service.getPublicBarberPage('aria-salon'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('در دایرکتوری sitemap فقط آرایشگرهای فعالِ دارای اسلاگ را قرار می‌دهد', async () => {

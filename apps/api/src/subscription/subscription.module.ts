@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { FrontendRevalidationService } from 'src/common/services/frontend-revalidation.service';
 import { NotificationModule } from 'src/notification/notification.module';
 
 import { SmsUsage } from './entities/sms-usage.entity';
@@ -22,7 +23,19 @@ import { UserSubscriptionService } from './user-subscription.service';
     SubscriptionService,
     UserSubscriptionService,
     PublicPageExpiryReminderService,
+    // برای پاک‌سازی on-demand کش فرانت پس از انقضای اشتراک پروفایل اختصاصی.
+    FrontendRevalidationService,
+    // توکنِ صریح برای تزریق اختیاری در `BarberService` بدون import مرزی ماژول
+    // (تا زنجیرهٔ @nestjs/schedule وارد آن ماژول نشود).
+    {
+      provide: 'USER_SUBSCRIPTION_SERVICE',
+      useExisting: UserSubscriptionService,
+    },
   ],
-  exports: [SubscriptionService, UserSubscriptionService],
+  exports: [
+    SubscriptionService,
+    UserSubscriptionService,
+    'USER_SUBSCRIPTION_SERVICE',
+  ],
 })
 export class SubscriptionModule {}

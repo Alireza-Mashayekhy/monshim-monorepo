@@ -30,8 +30,11 @@ import {
   notRefundedCondition,
 } from 'src/payment/payment-ledger';
 import { Referral } from 'src/referral/entities/referral.entity';
-import { PUBLIC_PAGE_TRIAL_PLAN_KEY } from 'src/subscription/constants';
 import { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
+import {
+  PublicPageSubscriptionSummary,
+  summarizePublicPageSubscriptions,
+} from 'src/subscription/public-page-subscription-summary';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { Brackets, In, IsNull, Repository, SelectQueryBuilder } from 'typeorm';
 
@@ -71,18 +74,13 @@ export interface PublicPageStatus {
    * اشتراک فعال «پروفایل اختصاصی» (دورهٔ رایگان، مهلت انتقالی یا پلن تمدید
    * پولی). تنها مسیر فعال‌سازی صفحه همین است.
    */
-  subscription: {
-    id: string;
-    planId: string;
-    planKey: string | null;
-    planName: string;
-    /** آیا این اشتراک، دورهٔ رایگان پس از ثبت‌نام است؟ */
-    isFreeTrial: boolean;
-    price: number;
-    startDate: string;
-    endDate: string;
-    status: string;
-  } | null;
+  subscription: PublicPageSubscriptionSummary | null;
+  /**
+   * آخرین اشتراک پروفایل اختصاصیِ کاربر (هر وضعیت) — فقط وقتی اشتراک فعالی
+   * وجود ندارد پر می‌شود؛ داشبورد با آن «منقضی‌شده + تاریخ پایان» را نشان
+   * می‌دهد به‌جای یک وضعیت خالی. وقتی اشتراک فعال هست `null` است.
+   */
+  lastSubscription: PublicPageSubscriptionSummary | null;
 }
 
 export interface SlugAvailabilityResult {
@@ -403,6 +401,7 @@ export class PublicPageService implements OnModuleInit {
       isPubliclyVisible: true,
       hasReferralDiscount: false,
       subscription: null,
+      lastSubscription: null,
     };
 
     if (!profile) return base;
@@ -413,6 +412,21 @@ export class PublicPageService implements OnModuleInit {
     ]);
     const slug = profile.slug?.trim() || null;
     const subscription = state.subscription;
+    const activeSummary = subscription
+      ? summarizePublicPageSubscriptions([subscription])
+      : null;
+
+    // فقط وقتی اشتراک فعالی نیست دنبال آخرین رکورد می‌گردیم (در حالت عادی
+    // همان یک کوئری اصلی کافی است و داشبورد هزینهٔ اضافه نمی‌دهد). خروجی برای
+    // هر دو حالت همان شکل `PublicPageSubscriptionSummary` است.
+    let lastSubscription: PublicPageStatus['lastSubscription'] = null;
+    if (!activeSummary) {
+      const rows =
+        await this.userSubscriptionService.findPublicPageSubscriptionsForUsers([
+          profile.userId,
+        ]);
+      lastSubscription = summarizePublicPageSubscriptions(rows);
+    }
 
     return {
       ...base,
@@ -424,23 +438,8 @@ export class PublicPageService implements OnModuleInit {
       isApproved: Boolean(profile.isApproved),
       isPubliclyVisible: profile.isPubliclyVisible !== false,
       hasReferralDiscount,
-      subscription: subscription
-        ? {
-            id: subscription.id,
-            planId: subscription.subscriptionPlanId,
-            planKey: subscription.subscriptionPlan?.planKey ?? null,
-            planName: subscription.subscriptionPlan?.name ?? '',
-            // Decimal columns may be returned by MySQL as strings. Identify the
-            // trial by its stable plan key rather than strict numeric equality.
-            isFreeTrial:
-              subscription.subscriptionPlan?.planKey ===
-              PUBLIC_PAGE_TRIAL_PLAN_KEY,
-            price: Number(subscription.price),
-            startDate: subscription.startDate.toISOString(),
-            endDate: subscription.endDate.toISOString(),
-            status: subscription.status,
-          }
-        : null,
+      subscription: activeSummary,
+      lastSubscription,
     };
   }
 
@@ -600,9 +599,20 @@ export class PublicPageService implements OnModuleInit {
       throw new NotFoundException('صفحهٔ اختصاصی این آرایشگاه فعال نیست');
     }
 
-    // `findPublicOne` خودش شرط‌های تأیید/فعال‌بودن/خدمت را اعمال می‌کند و در
-    // صورت عدم احراز، ۴۰۴ پرتاب می‌کند.
+    // `findPublicOne` خودش شرط‌های تأیید/فعال‌بودن/نمایش عمومی را اعمال
+    // می‌کند و در صورت عدم احراز، ۴۰۴ پرتاب می‌کند.
     const barber = await this.barberService.findPublicOne(profile.userId);
+
+    // هم‌راستا با `getPublicDirectory()` (مبنای sitemap و صفحهٔ `/providers`):
+    // صفحهٔ عمومی فقط وقتی ۲۰۰ می‌دهد که حداقل یک خدمت فعال داشته باشد.
+    // `findPublicOne` این شرط را اعمال نمی‌کند (چون مسیر رزرو `/panel` هم
+    // از همان متد استفاده می‌کند و نباید به‌خاطر نبود خدمت ۴۰۴ بدهد)، پس
+    // اینجا بررسی می‌شود تا صفحهٔ «یتیم» ساخته نشود — صفحه‌ای که ایندکس‌پذیر
+    // است ولی نه در sitemap هست و نه در فهرست، و محتوای نازکی (بدون بخش
+    // خدمات) به گوگل ارائه می‌دهد.
+    if (!Array.isArray(barber.services) || barber.services.length === 0) {
+      throw new NotFoundException('صفحهٔ اختصاصی این آرایشگاه فعال نیست');
+    }
 
     // تنها مسیر فعال‌سازی، اشتراک فعال «پروفایل اختصاصی» است.
     const subscription =

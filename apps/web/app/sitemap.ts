@@ -71,5 +71,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       url: `${siteConfig.url}/blog/${encodeURIComponent(a.slug)}`,
       ...(a.updatedAt ? { lastModified: new Date(a.updatedAt) } : {}),
     }));
-  return [...staticEntries, ...barberEntries, ...blogEntries];
+
+  // حذف دفاعی URLهای تکراری: اسلاگ در دیتابیس یکتاست، اما اگر پاسخ API به‌هر
+  // دلیل تکراری برگرداند (باگ/کش ناسازگار)، sitemap نباید همان URL را دوبار
+  // اعلام کند. اولین occurrence می‌ماند تا ترتیب خروجی پایدار بماند.
+  const seenUrls = new Set<string>();
+  return [...staticEntries, ...barberEntries, ...blogEntries].filter(entry => {
+    if (seenUrls.has(entry.url)) return false;
+    seenUrls.add(entry.url);
+    return true;
+  });
 }

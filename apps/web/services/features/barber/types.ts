@@ -1,6 +1,7 @@
 import { ActivityTypeValue } from '@/constants/activity-types';
 
 import { CityResponse, ProvinceResponse } from '../locations/types';
+import type { PublicPageSubscriptionStatus } from '../public-page/types';
 
 export type BarberPendingStatus = 'none' | 'pending' | 'rejected';
 
@@ -40,6 +41,12 @@ export interface BarberResponse {
   createdAt?: string;
   hasPendingChanges?: boolean;
   isEditReview?: boolean;
+  /**
+   * وضعیت واقعی اشتراک «پروفایل اختصاصی» (فقط در فهرست مدیریت ادمین
+   * پر می‌شود؛ از همان منطق مرکزی بک‌اند). `null` یعنی هیچ رکوردی از نوع
+   * `public_page` برای این آرایشگر وجود ندارد.
+   */
+  publicPageSubscription?: PublicPageSubscriptionStatus | null;
 }
 
 export interface Service {

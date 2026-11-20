@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -31,6 +32,12 @@ import { Payment } from 'src/payment/entities/payment.entity';
 import { BarberPublicPagePurchase } from 'src/public-page/entities/barber-public-page-purchase.entity';
 import { Referral } from 'src/referral/entities/referral.entity';
 import { Service } from 'src/services/entities/service.entity';
+// نوع فقط برای annotation؛ import مرزی کلاس سرویس در این فایل باید حذف شود
+// تا زنجیرهٔ @nestjs/schedule وارد این ماژول نشود (برخی تست‌ها آن را mock
+// نمی‌کنند). توکنِ تزریق صریح است.
+import type { PublicPageSubscriptionSummary } from 'src/subscription/public-page-subscription-summary';
+import { summarizePublicPageSubscriptionsByUser } from 'src/subscription/public-page-subscription-summary';
+import type { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
 import { Transaction } from 'src/wallet/entities/transaction.entity';
 import { Brackets, EntityManager, In, Repository } from 'typeorm';
@@ -104,6 +111,13 @@ export class BarberService implements OnModuleInit {
 
     @Optional()
     private readonly frontendRevalidationService?: FrontendRevalidationService,
+
+    // اختیاری تا تست‌های قدیمیِ سازندهٔ این کلاس بدون این وابستگی ساخته شوند؛
+    // در پروداکشن `BarberModule` ماژول اشتراک را وارد می‌کند و پنل مدیریت
+    // وضعیت واقعی اشتراک صفحهٔ اختصاصی را می‌بیند.
+    @Optional()
+    @Inject('USER_SUBSCRIPTION_SERVICE')
+    private readonly userSubscriptionService?: UserSubscriptionService,
   ) {}
 
   /**
@@ -664,6 +678,26 @@ export class BarberService implements OnModuleInit {
       .take(take)
       .getManyAndCount();
 
+    // اشتراک صفحهٔ اختصاصی هر ردیف (فقط نمایشی؛ همان منطق مرکزی خلاصه‌سازی).
+    // در صورت خطا، فهرست مدیریت همچنان نمایش داده می‌شود و فقط این ستون
+    // خالی می‌ماند — وضعیت اشتراک هرگز نباید لیست را بشکند.
+    let subscriptionByUser = new Map<number, PublicPageSubscriptionSummary>();
+    if (this.userSubscriptionService && users.length > 0) {
+      try {
+        const rows =
+          await this.userSubscriptionService.findPublicPageSubscriptionsForUsers(
+            users.map(user => user.id),
+          );
+        subscriptionByUser = summarizePublicPageSubscriptionsByUser(rows);
+      } catch (error) {
+        this.logger.warn(
+          `خواندن وضعیت اشتراک پروفایل اختصاصی برای فهرست مدیریت ناموفق بود: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
     return {
       data: users.map(user => ({
         id: user.id,
@@ -680,6 +714,12 @@ export class BarberService implements OnModuleInit {
         isAdminAccount: user.roles?.includes(Role.Admin) ?? false,
         slug: user.barberProfile?.slug ?? null,
         createdAt: user.createdAt,
+        /**
+         * وضعیت واقعی اشتراک «پروفایل اختصاصی» (رایگان/پولی/منقضی/بدون
+         * اشتراک). `null` یعنی هیچ رکوردی از نوع public_page برای این کاربر
+         * وجود ندارد.
+         */
+        publicPageSubscription: subscriptionByUser.get(user.id) ?? null,
       })),
       pagination: {
         page,
