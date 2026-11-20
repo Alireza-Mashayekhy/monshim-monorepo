@@ -162,6 +162,16 @@ export class PublicPageService implements OnModuleInit {
       return;
     }
 
+    /**
+     * ترتیب مهم است:
+     *   ۱. مهلت انتقالی خریداران قبلی پکیج (۱۸۰ روز) — این کاربران از قبل
+     *      «دسترسی» داشته‌اند و نباید فقط یک ماه رایگان بگیرند؛
+     *   ۲. تکمیل دورهٔ رایگان یک‌ماهه برای بقیهٔ آرایشگرهایی که پیش از افزودن
+     *      این قابلیت ثبت‌نام کرده‌اند و هیچ اشتراک صفحهٔ اختصاصی ندارند.
+     *
+     * هر دو متد idempotent هستند: اجرای هر بوت، نه اشتراک تکراری می‌سازد و
+     * نه اشتراک فعالِ موجود را تمدید/بازنویسی می‌کند.
+     */
     try {
       await this.grantLegacyPublicPageAccess();
     } catch (error) {
@@ -169,6 +179,27 @@ export class PublicPageService implements OnModuleInit {
         `انتقال خریداران قبلی صفحهٔ اختصاصی انجام نشد: ${String(error)}`,
       );
     }
+
+    try {
+      await this.userSubscriptionService.backfillFreePublicPageTrialForExistingBarbers();
+    } catch (error) {
+      this.logger.error(
+        `تکمیل دورهٔ رایگان صفحهٔ اختصاصی برای آرایشگرهای قبلی انجام نشد: ${String(
+          error,
+        )}`,
+      );
+    }
+  }
+
+  /**
+   * تکمیل دستیِ دورهٔ رایگان صفحهٔ اختصاصی برای آرایشگرهای ثبت‌نام‌کردهٔ قبلی
+   * (همان کاری که هنگام بوت خودکار انجام می‌شود). برای ادمین تا بتواند
+   * بدون ری‌استارت، اول بشمارد (`dryRun=true`) و بعد اجرا کند.
+   */
+  async backfillFreePublicPageTrial(options?: { dryRun?: boolean }) {
+    return this.userSubscriptionService.backfillFreePublicPageTrialForExistingBarbers(
+      options,
+    );
   }
 
   private publicUrl(slug: string) {

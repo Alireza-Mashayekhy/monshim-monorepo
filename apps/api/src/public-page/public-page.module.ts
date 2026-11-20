@@ -11,6 +11,7 @@ import { BarberPublicPagePurchase } from './entities/barber-public-page-purchase
 import { PublicPageDiscount } from './entities/public-page-discount.entity';
 import { PublicPageController } from './public-page.controller';
 import { PublicPageService } from './public-page.service';
+import { PublicPageAdminController } from './public-page-admin.controller';
 import { PublicPageDiscountAdminController } from './public-page-discount.admin.controller';
 import { PublicPageSchemaService } from './public-page-schema.service';
 
@@ -29,7 +30,11 @@ import { PublicPageSchemaService } from './public-page-schema.service';
     // `UserSubscriptionService` برای تشخیص اشتراک فعال «پروفایل اختصاصی»
     SubscriptionModule,
   ],
-  controllers: [PublicPageController, PublicPageDiscountAdminController],
+  controllers: [
+    PublicPageController,
+    PublicPageDiscountAdminController,
+    PublicPageAdminController,
+  ],
   providers: [PublicPageService, PublicPageSchemaService],
   exports: [PublicPageService],
 })

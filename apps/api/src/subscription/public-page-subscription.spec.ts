@@ -413,3 +413,130 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
     await expect(service.claimFreeTrialSms('sub-1')).resolves.toBe(false);
   });
 });
+
+describe('تکمیل دورهٔ رایگان برای آرایشگرهای ثبت‌نام‌کردهٔ قبلی', () => {
+  const trialPlan = {
+    id: 'plan-trial',
+    planKey: 'public_page_trial',
+    name: 'پروفایل اختصاصی رایگان',
+    price: 0,
+    smsCount: 0,
+    durationDays: 30,
+    planType: 'public_page',
+  } as any;
+
+  /**
+   * ساخت سرویس با یک کوئریِ خامِ شبیه‌سازی‌شده.
+   *
+   * ریشهٔ باگی که این تست‌ها می‌گیرند: اعطای دورهٔ رایگان فقط در مسیر
+   * `registerBarber` بود؛ آرایشگرهایی که پیش از آن ثبت‌نام کرده بودند هیچ
+   * اشتراکی نداشتند و صفحهٔ اختصاصی‌شان غیرفعال می‌ماند.
+   */
+  function createBackfillHarness(options?: {
+    candidateIds?: number[];
+    plans?: any[];
+  }) {
+    const candidates = options?.candidateIds ?? [];
+    const plans = options?.plans ?? [trialPlan];
+    const subscriptions: any[] = [];
+
+    const subscriptionPlanRepo: any = {
+      findOne: jest.fn(async ({ where }: any) => {
+        if (where?.planKey)
+          return plans.find(plan => plan.planKey === where.planKey) ?? null;
+        if (where?.id) return plans.find(plan => plan.id === where.id) ?? null;
+        return null;
+      }),
+    };
+
+    const userSubscriptionRepo: any = {
+      find: jest.fn(async () => subscriptions),
+      create: jest.fn((value: any) => ({ ...value })),
+      save: jest.fn(async (value: any) => {
+        subscriptions.push(value);
+        return value;
+      }),
+      manager: {
+        createQueryBuilder: jest.fn(() => ({
+          innerJoin: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          getRawMany: jest.fn(async () =>
+            candidates.map(id => ({ id: String(id) })),
+          ),
+        })),
+      },
+    };
+
+    const service = new UserSubscriptionService(
+      userSubscriptionRepo,
+      subscriptionPlanRepo,
+      {} as any,
+      {} as any,
+    );
+
+    return { service, subscriptions, userSubscriptionRepo };
+  }
+
+  it('برای هر آرایشگرِ بدون اشتراک، دقیقاً یک دورهٔ رایگان یک‌ماهه می‌سازد', async () => {
+    const { service, subscriptions } = createBackfillHarness({
+      candidateIds: [11, 12, 13],
+    });
+
+    await expect(
+      service.backfillFreePublicPageTrialForExistingBarbers(),
+    ).resolves.toEqual({ candidates: 3, granted: 3, failed: 0, dryRun: false });
+
+    expect(subscriptions).toHaveLength(3);
+    for (const subscription of subscriptions) {
+      expect(subscription).toMatchObject({
+        subscriptionPlanId: 'plan-trial',
+        price: 0,
+        smsTotal: 0,
+        status: UserSubscriptionStatus.ACTIVE,
+      });
+      expect(subscription.endDate).toEqual(
+        addPlanDuration(subscription.startDate, 30, 'public_page'),
+      );
+    }
+  });
+
+  it('حالت dryRun فقط می‌شمارد و هیچ اشتراکی نمی‌سازد', async () => {
+    const { service, subscriptions } = createBackfillHarness({
+      candidateIds: [11, 12],
+    });
+
+    await expect(
+      service.backfillFreePublicPageTrialForExistingBarbers({ dryRun: true }),
+    ).resolves.toEqual({ candidates: 2, granted: 0, failed: 0, dryRun: true });
+
+    expect(subscriptions).toHaveLength(0);
+  });
+
+  it('بدون کاندید، نتیجه صفر است و پلن هم خوانده نمی‌شود', async () => {
+    const { service } = createBackfillHarness({ candidateIds: [] });
+
+    await expect(
+      service.backfillFreePublicPageTrialForExistingBarbers(),
+    ).resolves.toEqual({ candidates: 0, granted: 0, failed: 0, dryRun: false });
+  });
+
+  it('اگر پلن دورهٔ رایگان seed نشده باشد، failed گزارش می‌شود و چیزی ساخته نمی‌شود', async () => {
+    const { service, subscriptions } = createBackfillHarness({
+      candidateIds: [11, 12],
+      plans: [],
+    });
+
+    await expect(
+      service.backfillFreePublicPageTrialForExistingBarbers(),
+    ).resolves.toEqual({
+      candidates: 2,
+      granted: 0,
+      failed: 2,
+      dryRun: false,
+    });
+
+    expect(subscriptions).toHaveLength(0);
+  });
+});
