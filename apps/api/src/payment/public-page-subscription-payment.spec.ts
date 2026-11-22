@@ -60,7 +60,6 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
       publicPageService as any,
       subscriptionService as any,
       userSubscriptionService as any,
@@ -190,6 +189,34 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
     expect(
       userSubscriptionService.grantLegacyPublicPageAccess,
     ).toHaveBeenCalledWith(7);
+    expect(
+      userSubscriptionService.activateSubscriptionAfterPayment,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('پرداخت موفقِ پلن پیامکی (SUBSCRIPTION)، اشتراک را از سرویس مرکزی فعال می‌کند', async () => {
+    const { service, userSubscriptionService } = buildHarness({});
+
+    await (service as any).fulfillPayment({
+      userId: 7,
+      purpose: PaymentPurpose.SUBSCRIPTION,
+      purposeId: 'plan-sms-1',
+    });
+
+    expect(
+      userSubscriptionService.activateSubscriptionAfterPayment,
+    ).toHaveBeenCalledWith(7, 'plan-sms-1');
+  });
+
+  it('پرداخت SUBSCRIPTION با purposeId خالی، اشتراکی فعال نمی‌کند', async () => {
+    const { service, userSubscriptionService } = buildHarness({});
+
+    await (service as any).fulfillPayment({
+      userId: 7,
+      purpose: PaymentPurpose.SUBSCRIPTION,
+      purposeId: undefined,
+    });
+
     expect(
       userSubscriptionService.activateSubscriptionAfterPayment,
     ).not.toHaveBeenCalled();

@@ -191,6 +191,7 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
           'subscription.status = :status',
           { status: UserSubscriptionStatus.ACTIVE },
         ],
+        ['plan.planType = :planType', { planType: 'public_page' }],
         ['subscription.startDate <= :now', expect.any(Object)],
         ['subscription.endDate > :now', expect.any(Object)],
       ]),
@@ -205,6 +206,28 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
         ['subscription.endDate > :now', expect.any(Object)],
       ]),
     );
+  });
+
+  it('اشتراک پیامکی تنها با planType=sms و داخل بازهٔ startDate تا endDate فعال است', async () => {
+    const { service, userSubscriptionRepo } = createHarness();
+
+    await service.getCurrent(42, 'sms');
+    const queryBuilder =
+      userSubscriptionRepo.createQueryBuilder.mock.results[0].value;
+    expect(queryBuilder.andWhere.mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          'subscription.status = :status',
+          { status: UserSubscriptionStatus.ACTIVE },
+        ],
+        ['plan.planType = :planType', { planType: 'sms' }],
+        ['subscription.startDate <= :now', expect.any(Object)],
+        ['subscription.endDate > :now', expect.any(Object)],
+      ]),
+    );
+    expect(queryBuilder.innerJoinAndSelect.mock.calls).toEqual([
+      ['subscription.subscriptionPlan', 'plan'],
+    ]);
   });
 
   it('دورهٔ رایگان را با قیمت صفر و دقیقاً یک ماه تقویمی اعطا می‌کند', async () => {

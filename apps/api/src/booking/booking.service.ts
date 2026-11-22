@@ -26,10 +26,7 @@ import {
 } from 'src/payment/entities/payment.entity';
 import { ReferralService } from 'src/referral/referral.service';
 import { Service } from 'src/services/entities/service.entity';
-import {
-  UserSubscription,
-  UserSubscriptionStatus,
-} from 'src/subscription/entities/user-subscription.entity';
+import { SMS_PLAN_TYPE } from 'src/subscription/constants';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
 import { WalletService } from 'src/wallet/wallet.service';
@@ -84,9 +81,6 @@ export class BookingsService {
 
     @InjectRepository(BarberWorkHours)
     private workHoursRepo: Repository<BarberWorkHours>,
-
-    @InjectRepository(UserSubscription)
-    private userSubscriptionRepo: Repository<UserSubscription>,
 
     @InjectRepository(User)
     private userRepo: Repository<User>,
@@ -1480,21 +1474,27 @@ export class BookingsService {
     barberUserId: number,
     requiredCredits = CONFIRMATION_SMS_COST,
   ): Promise<boolean> {
-    const subscription = await this.userSubscriptionRepo.findOne({
-      where: {
-        userId: barberUserId,
-        status: UserSubscriptionStatus.ACTIVE,
-      },
-      order: {
-        endDate: 'DESC',
-      },
-    });
+    /**
+     * منبع حقیقت یگانه برای «اشتراک پیامکی فعال» همان `getCurrent` در
+     * `UserSubscriptionService` است — همان منطق `/user-subscriptions/current`
+     * (نوع پلن، status، startDate/endDate و زمان فعلی). قبلاً این متد کوئریِ
+     * مستقل می‌داشت که «آخرین اشتراک هر نوع» را می‌گرفت؛ اشتراکِ «پروفایل
+     * اختصاصی» (بدون پیامک) با تاریخ پایانِ نزدیک‌تر انتخاب می‌شد و آرایشگر
+     * با اشتراک پیامکی معتبر، با پیام «اشتراک ندارد» مواجه می‌شد.
+     */
+    const subscription = await this.userSubscriptionService.getCurrent(
+      barberUserId,
+      SMS_PLAN_TYPE,
+    );
 
-    if (!subscription || subscription.endDate <= new Date()) {
+    if (!subscription) {
       return false;
     }
 
-    return subscription.smsTotal - subscription.smsUsed >= requiredCredits;
+    const remaining =
+      Number(subscription.smsTotal ?? 0) - Number(subscription.smsUsed ?? 0);
+
+    return remaining >= requiredCredits;
   }
 
   /**

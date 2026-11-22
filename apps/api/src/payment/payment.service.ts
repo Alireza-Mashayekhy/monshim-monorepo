@@ -27,11 +27,8 @@ import { PublicPageService } from 'src/public-page/public-page.service';
 import { ReferralService } from 'src/referral/referral.service';
 import { Service } from 'src/services/entities/service.entity';
 import { SiteSettings } from 'src/settings/entities/setting.entity';
+import { SMS_PLAN_TYPE } from 'src/subscription/constants';
 import { SubscriptionPlan } from 'src/subscription/entities/subscription-plan.entity';
-import {
-  UserSubscription,
-  UserSubscriptionStatus,
-} from 'src/subscription/entities/user-subscription.entity';
 import { SubscriptionService } from 'src/subscription/subscription.service';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
@@ -87,9 +84,6 @@ export class PaymentService {
 
     @InjectRepository(SubscriptionPlan)
     private readonly planRepo: Repository<SubscriptionPlan>,
-
-    @InjectRepository(UserSubscription)
-    private readonly userSubscriptionRepo: Repository<UserSubscription>,
 
     @InjectRepository(Service)
     private readonly serviceRepo: Repository<Service>,
@@ -390,8 +384,16 @@ export class PaymentService {
       throw new NotFoundException('کاربر یافت نشد');
     }
 
+    // خرید «اشتراک پیامکی» — تنها پلن‌های نوع sms قابل خرید از همین مسیرند؛
+    // پلن‌های «پروفایل اختصاصی» اتفاقاً از مسیر اختصاصی خودشان (/payment/public-page)
+    // خریداری می‌شوند. رد کردن پلن‌های دیگر اینجا از درخواستی مثل
+    // SUBSCRIPTION → public_page جلوگیری می‌کند.
     const plan = await this.planRepo.findOne({
-      where: { id: dto.subscriptionPlanId, isActive: true },
+      where: {
+        id: dto.subscriptionPlanId,
+        isActive: true,
+        planType: SMS_PLAN_TYPE,
+      },
     });
     if (!plan) {
       throw new NotFoundException('پلن اشتراک یافت نشد یا غیرفعال است');
@@ -1587,7 +1589,15 @@ export class PaymentService {
     payment: Payment,
   ): Promise<{ refunded: boolean }> {
     if (payment.purpose === PaymentPurpose.SUBSCRIPTION && payment.purposeId) {
-      await this.activateSubscriptionAfterPayment(
+      /**
+       * فعال‌سازی اشتراک از یک منبع واحد عبور می‌کند (`UserSubscriptionService`)؛
+       * همان منطق دورهٔ تمدید/انتقال اعتبار پیامکی و نوع پلن. پیش از این
+       * یک نسخهٔ جداسازی‌شده در این متد جریان داشت: آن نسخه هم‌نوع‌نبودن
+       * اشتراک تمام انواع دیگر (مثلاً «پروفایل اختصاصی») را منقضی می‌کرد،
+       * اعتبار باقیماندهٔ پیامک را دور می‌انداخت و تاریخ شروع را از زمان
+       * پرداخت (نه انتهای اعتبار فعلی) می‌گرفت.
+       */
+      await this.userSubscriptionService.activateSubscriptionAfterPayment(
         payment.userId,
         payment.purposeId,
       );
@@ -1858,41 +1868,6 @@ export class PaymentService {
     }
 
     return handled;
-  }
-
-  // فعال‌سازی اشتراک پس از تایید پرداخت
-  private async activateSubscriptionAfterPayment(
-    userId: number,
-    planId: string,
-  ) {
-    const plan = await this.planRepo.findOne({ where: { id: planId } });
-    if (!plan) return;
-
-    // منقضی کردن اشتراک قبلی
-    await this.userSubscriptionRepo
-      .createQueryBuilder()
-      .update(UserSubscription)
-      .set({ status: UserSubscriptionStatus.EXPIRED })
-      .where('user_id = :userId', { userId })
-      .andWhere('status = :status', { status: UserSubscriptionStatus.ACTIVE })
-      .execute();
-
-    const startDate = new Date();
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + plan.durationDays);
-
-    const userSubscription = this.userSubscriptionRepo.create({
-      userId,
-      subscriptionPlanId: plan.id,
-      price: plan.price,
-      smsTotal: plan.smsCount,
-      smsUsed: 0,
-      status: UserSubscriptionStatus.ACTIVE,
-      startDate,
-      endDate,
-    });
-
-    await this.userSubscriptionRepo.save(userSubscription);
   }
 
   private async completeBookingPayment(

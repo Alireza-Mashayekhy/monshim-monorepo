@@ -1,5 +1,6 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   Calendar,
@@ -19,6 +20,8 @@ import { Button } from '@/components/ui/button';
 import { revalidateMyPublicBarberPage } from '@/lib/actions/public-page';
 import { trackEventOnce } from '@/lib/analytics';
 import { formatPrice } from '@/lib/utils';
+import { publicPageKeys } from '@/services/features/public-page/hooks';
+import { subscriptionKeys } from '@/services/features/subscription/hooks';
 
 const toPersianDigits = (num: number | string): string => {
   const farsiDigits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
@@ -27,6 +30,7 @@ const toPersianDigits = (num: number | string): string => {
 
 function PaymentCallbackContent() {
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
 
   const status = searchParams.get('status');
   const isSuccess = status === 'success';
@@ -99,7 +103,20 @@ function PaymentCallbackContent() {
       return;
     revalidateRan.current = true;
     void revalidateMyPublicBarberPage();
-  }, [isSuccess, purpose]);
+    // کش «صفحهٔ اختصاصی» را همین لحظه پاک کنیم تا داشبورد وضعیت فعال‌شده را ببیند.
+    void queryClient.invalidateQueries({ queryKey: publicPageKeys.all });
+  }, [isSuccess, purpose, queryClient]);
+
+  // پرداخت موفقِ اشتراک پیامکی: کشِ داشبورد و فرم ثبت نوبت دستی که پیش از
+  // پرداخت «اشتراک نداری» را نشان می‌داد، باید دقیقاً همین لحظه پاک شود تا
+  // اعتبار تازهٔ پیامک همان لحظه از سرور خوانده شود.
+  const subscriptionInvalidated = useRef(false);
+  useEffect(() => {
+    if (!isSuccess || purpose !== 'SUBSCRIPTION' || subscriptionInvalidated.current)
+      return;
+    subscriptionInvalidated.current = true;
+    void queryClient.invalidateQueries({ queryKey: subscriptionKeys.user() });
+  }, [isSuccess, purpose, queryClient]);
 
   // پرداختِ موفق — یک بار در هر نشست (کلید بر اساس trackId که شناسهٔ داخلی
   // تراکنش است و در URL همین صفحه از قبل وجود دارد). هیچ مبلغ/شماره کارتی

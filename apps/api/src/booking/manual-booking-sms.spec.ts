@@ -80,20 +80,19 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
         },
       ]),
     };
-    const userSubscriptionRepo: any = {
-      findOne: jest.fn().mockResolvedValue(
-        smsRemaining === null
-          ? null
-          : {
-              id: 1,
-              userId: barber.userId,
-              status: UserSubscriptionStatus.ACTIVE,
-              smsTotal: 100,
-              smsUsed: 100 - smsRemaining,
-              endDate: new Date('2099-12-30T00:00:00.000Z'),
-            },
-      ),
-    };
+    const currentSubscription =
+      smsRemaining === null
+        ? null
+        : {
+            id: 'sub-1',
+            userId: barber.userId,
+            planType: 'sms',
+            status: UserSubscriptionStatus.ACTIVE,
+            smsTotal: 100,
+            smsUsed: 100 - smsRemaining,
+            startDate: new Date('2026-01-01T00:00:00.000Z'),
+            endDate: new Date('2099-12-30T00:00:00.000Z'),
+          };
     const userRepo: any = {
       findOne: jest.fn().mockResolvedValue(member.customer),
     };
@@ -101,6 +100,7 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
       find: jest.fn().mockResolvedValue([]),
     };
     const userSubscriptionService: any = {
+      getCurrent: jest.fn().mockResolvedValue(currentSubscription),
       deductSms: jest.fn().mockResolvedValue(undefined),
     };
     const clubService: any = {
@@ -125,7 +125,6 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
       barberProfileRepo,
       serviceRepo,
       workHoursRepo,
-      userSubscriptionRepo,
       userRepo,
       slotHoldRepo,
       {} as any,
@@ -207,6 +206,70 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
         reminderHours: 2,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('uses the central subscription check with SMS plan type and window', async () => {
+    const { service, userSubscriptionService } = createHarness(5);
+
+    await service.createManualByBarber(100, {
+      clubCustomerId: 'club-member-1',
+      serviceIds: ['service-1'],
+      date,
+      time: '10:30',
+      sendDepositLink: false,
+    });
+
+    // منبع تصمیم‌گیری نسخهٔ مرکزی اشتراک است، نه کوئریِ مستقل با شرط‌های متفاوت.
+    expect(userSubscriptionService.getCurrent).toHaveBeenCalledWith(100, 'sms');
+  });
+
+  it('without an active SMS subscription, the SMS path is blocked but the deposit-link path is allowed', async () => {
+    // وضعیتی که آرایشگرِ منقضی‌شدهٔ پیامکی/بدون اشتراک پیامکی دارد (مثلاً فقط
+    // اشتراک «پروفایل اختصاصی» فعالش باقی مانده است).
+    const { service } = createHarness(null);
+
+    await expect(
+      service.createManualByBarber(100, {
+        clubCustomerId: 'club-member-1',
+        serviceIds: ['service-1'],
+        date,
+        time: '11:30',
+        sendDepositLink: false,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    const saved = await service.createManualByBarber(100, {
+      clubCustomerId: 'club-member-1',
+      serviceIds: ['service-1'],
+      date,
+      time: '12:30',
+      sendDepositLink: true,
+    });
+
+    expect(saved.bookings).toHaveLength(1);
+    expect(saved.bookings[0].sendDepositLink).toBe(true);
+  });
+
+  it('allows sendDepositLink=true together with sendSmsReminder=true even when credits are low for confirmation', async () => {
+    // ۲ اعتبار کافی برای یادآوری (۲) — بدون ارسال تأیید پیامکی.
+    const { service, userSubscriptionService } = createHarness(2);
+
+    const saved = await service.createManualByBarber(100, {
+      clubCustomerId: 'club-member-1',
+      serviceIds: ['service-1'],
+      date,
+      time: '13:00',
+      sendDepositLink: true,
+      sendSmsReminder: true,
+      reminderHours: 2,
+    });
+
+    expect(saved.bookings).toHaveLength(1);
+    expect(userSubscriptionService.deductSms).toHaveBeenCalledWith(
+      100,
+      2,
+      'پیامک یادآوری نوبت دستی',
+    );
   });
 
   it('rejects sendSmsReminder=true when reminderHours is omitted', async () => {

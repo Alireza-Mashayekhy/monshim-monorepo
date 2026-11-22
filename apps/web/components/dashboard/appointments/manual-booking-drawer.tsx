@@ -195,23 +195,41 @@ export function ManualBookingDrawer({
   const reminderHours = useWatch({ control, name: 'reminderHours' });
 
   // وضعیت اشتراک آرایشگر (برای قوانین پیامک یادآوری)
-  const { data: subscriptionData } = useCurrentUserSubscription();
+  //
+  // سه حالتِ مجزا:
+  //   • در حال بارگذاری یا خطا — وضعیت نامشخص: نباید «اشتراک ندارد» نمایش داده شود
+  //     (در این حالت مسیر پلن پیامکی غیرفعال می‌ماند ولی لینک بیعانه آزاد است).
+  //   • پاسخ داده شد و اشتراکی نیست — همان پیام «اشتراک ندارد» نمایش داده می‌شود.
+  //   • پاسخ داده شد و اشتراک فعال است — اعتبار باقی‌مانده محاسبه می‌شود.
+  const {
+    data: subscriptionData,
+    isLoading: subscriptionLoading,
+    isError: subscriptionError,
+    refetch: refetchSubscription,
+  } = useCurrentUserSubscription();
 
-  const subscription = subscriptionData?.data;
+  const subscription = subscriptionData?.data ?? null;
+  const subscriptionResolved = !subscriptionLoading && !subscriptionError;
 
   const smsRemaining = subscription
     ? Math.max(0, subscription.smsTotal - subscription.smsUsed)
     : 0;
 
+  // «واجد شرایط پلن پیامکی» فقط وقتی اشتراک واقعاً فعّال و واجد اعتبارِ لازم است.
   const smsEligible =
-    !!subscription && smsRemaining >= SMS_CREDIT_COST_PER_TEMPLATE;
+    subscriptionResolved &&
+    !!subscription &&
+    smsRemaining >= SMS_CREDIT_COST_PER_TEMPLATE;
 
   // بدون اشتراک فعال، ارسال لینک بیعانه اجباری است
   const effectiveDepositLink = smsEligible ? sendDepositLink : true;
   const reminderSmsCost = effectiveDepositLink
     ? SMS_CREDIT_COST_PER_TEMPLATE
     : SMS_CREDIT_COST_PER_TEMPLATE * 2;
-  const canSendSmsReminder = !!subscription && smsRemaining >= reminderSmsCost;
+  const canSendSmsReminder =
+    subscriptionResolved &&
+    !!subscription &&
+    smsRemaining >= reminderSmsCost;
 
   const { data: services, isLoading: servicesLoading } = useMyServices();
 
@@ -1166,7 +1184,42 @@ export function ManualBookingDrawer({
                 </div>
               )}
 
-              {!smsEligible && (
+              {!subscriptionResolved && (
+                <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <Loader2
+                    size={14}
+                    className={cn(
+                      'mt-0.5 shrink-0',
+                      subscriptionLoading ? 'animate-spin text-gray-400' : 'text-gray-400',
+                    )}
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-black leading-5 text-gray-700">
+                      {subscriptionLoading
+                        ? 'در حال بررسی وضعیت اشتراک شما...'
+                        : 'وضعیت اشتراک شما بارگذاری نشد'}
+                    </p>
+
+                    {!subscriptionLoading && (
+                      <button
+                        type="button"
+                        onClick={() => void refetchSubscription()}
+                        className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-black text-primary hover:underline"
+                      >
+                        تلاش مجدد
+                      </button>
+                    )}
+
+                    <p className="mt-1 text-[10px] font-medium leading-5 text-gray-500">
+                      مسیر «لینک بیعانه» همیشه فعال است؛ بدون اشتراک بودن معنای
+                      عدم امکان ثبت نوبت نیست.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {subscriptionResolved && !smsEligible && (
                 <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
                   <Lock size={14} className="mt-0.5 shrink-0 text-amber-500" />
 

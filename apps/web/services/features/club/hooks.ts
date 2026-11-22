@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
+import { subscriptionKeys } from '../subscription/hooks';
 import {
   addClubCustomer,
   createClubGroup,
@@ -129,6 +130,10 @@ export const useCreateManualBooking = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['barber-bookings'] });
       queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
+      // ثبت نوبت دستی اعتبار پیامک می‌کَشد؛ بدون این invalidate، اعتبار باقی‌مانده
+      // تا پایان پنجرهٔ staleTime قدیمی می‌ماند و «اشتراک تمام شده» اشتباهاً
+      // هنوز با اعتبار بالا نمایش داده می‌شود.
+      queryClient.invalidateQueries({ queryKey: subscriptionKeys.all });
       toast.success('نوبت با موفقیت ثبت شد.');
     },
     onError: (error: any) => {
