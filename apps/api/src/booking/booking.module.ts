@@ -7,7 +7,6 @@ import { NotificationModule } from 'src/notification/notification.module';
 import { Payment } from 'src/payment/entities/payment.entity';
 import { ReferralModule } from 'src/referral/referral.module';
 import { Service } from 'src/services/entities/service.entity';
-import { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
 import { SubscriptionModule } from 'src/subscription/subscription.module';
 import { User } from 'src/users/entities/user.entity';
 import { WalletModule } from 'src/wallet/wallet.module';
@@ -25,7 +24,6 @@ import { SlotHold } from './entities/slot-hold.entity';
       Service,
       User,
       BarberWorkHours,
-      UserSubscription,
       Payment,
       SlotHold,
     ]),

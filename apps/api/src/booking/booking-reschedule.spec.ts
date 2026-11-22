@@ -85,7 +85,6 @@ describe('BookingsService reschedule', () => {
       serviceRepo,
       workHoursRepo,
       {} as any,
-      {} as any,
       slotHoldRepo,
       {} as any,
       {} as any,

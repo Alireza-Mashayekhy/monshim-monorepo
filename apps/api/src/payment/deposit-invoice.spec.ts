@@ -234,7 +234,6 @@ describe('PaymentService deposit invoice & gateway payment flow', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
       bookingRepo,
       {} as any,
       settingsRepo,

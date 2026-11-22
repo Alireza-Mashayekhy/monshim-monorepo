@@ -29,7 +29,6 @@ const buildService = (env: Record<string, string | undefined>) => {
     repository, // userRepo
     repository, // barberProfileRepo
     repository, // planRepo
-    repository, // userSubscriptionRepo
     repository, // serviceRepo
     repository, // bookingRepo
     repository, // slotHoldRepo

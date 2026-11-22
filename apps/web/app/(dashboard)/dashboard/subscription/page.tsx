@@ -73,8 +73,12 @@ export default function SubscriptionPage() {
 
   const { data: plans, isLoading: plansLoading } = useActiveSubscriptionPlans();
 
-  const { data: currentSubscription, isLoading: currentLoading } =
-    useCurrentUserSubscription();
+  const {
+    data: currentSubscription,
+    isLoading: currentLoading,
+    isError: currentError,
+    refetch: refetchSubscription,
+  } = useCurrentUserSubscription();
 
   const paySubscriptionMutation = usePaySubscription();
 
@@ -236,6 +240,30 @@ export default function SubscriptionPage() {
                 </div>
               </div>
             </>
+          ) : currentError ? (
+            <div className="py-4 text-center space-y-2">
+              <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+                <Gem size={20} />
+              </div>
+
+              <h2 className="text-sm font-black text-gray-900">
+                وضعیت اشتراک شما بارگذاری نشد
+              </h2>
+
+              <p className="text-xs text-gray-400 leading-5">
+                اطلاعات اشتراک فعلی به‌درستی دریافت نشد؛ این به معنای نداشتن
+                اشتراک نیست. دوباره تلاش کنید.
+              </p>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-1"
+                onClick={() => void refetchSubscription()}
+              >
+                تلاش مجدد
+              </Button>
+            </div>
           ) : (
             <div className="py-4 text-center space-y-1.5">
               <div className="w-11 h-11 rounded-2xl bg-primary-2/60 text-primary flex items-center justify-center mx-auto">
