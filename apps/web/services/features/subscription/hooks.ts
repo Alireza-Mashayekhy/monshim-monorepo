@@ -77,11 +77,14 @@ export function useCurrentUserSubscription() {
   });
 }
 
-export function useUserSubscriptions() {
+export function useUserSubscriptions(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: subscriptionKeys.history(),
     queryFn: getUserSubscriptions,
     staleTime: 2 * 60 * 1000,
+    // صفحهٔ اشتراک فقط وقتی اشتراک فعالی یافت نشد به سابقه نیاز دارد؛
+    // فراخوانی شرطی از درخواست اضافی جلوگیری می‌کند.
+    enabled: options?.enabled ?? true,
   });
 }
 

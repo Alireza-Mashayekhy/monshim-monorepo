@@ -2,6 +2,7 @@ import { ActivityTypeValue } from '@/constants/activity-types';
 
 import { CityResponse, ProvinceResponse } from '../locations/types';
 import type { PublicPageSubscriptionStatus } from '../public-page/types';
+import type { SmsSubscriptionStatus } from '../subscription/types';
 
 export type BarberPendingStatus = 'none' | 'pending' | 'rejected';
 
@@ -47,6 +48,13 @@ export interface BarberResponse {
    * `public_page` برای این آرایشگر وجود ندارد.
    */
   publicPageSubscription?: PublicPageSubscriptionStatus | null;
+  /**
+   * وضعیت واقعی اشتراک «پیامکی» با سهمیه و مصرف آن (فقط در فهرست مدیریت
+   * ادمین پر می‌شود؛ از همان منطق مرکزی بک‌اند). پلن فعال بر اساس
+   * status و بازهٔ startDate تا endDate تشخیص داده می‌شود. `null` یعنی هیچ
+   * رکورد اشتراک پیامکی برای این آرایشگر وجود ندارد.
+   */
+  smsSubscription?: SmsSubscriptionStatus | null;
 }
 
 export interface Service {

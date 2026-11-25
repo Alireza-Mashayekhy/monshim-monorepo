@@ -123,14 +123,22 @@ export class UserSubscriptionService {
    * پیش‌فرض `sms` است تا رفتار فعلی مسیرهای پیامکی و صفحهٔ «اشتراک»
    * داشبورد بدون تغییر بماند. مسیرهای پروفایل اختصاصی با
    * `planType = 'public_page'` کار می‌کنند.
+   *
+   * `manager` وقتی داده می‌شود، خوانش از **درون همان تراکنش** انجام می‌شود
+   * (مثلاً مسیر ثبت رزرو دستی که بررسی اشتراک و کسر سهمیه باید با ثبت نوبت
+   * یک‌جا commit یا rollback شوند). بدون آن، رفتار قبلی حفظ می‌شود.
    */
   async getCurrent(
     userId: number,
     planType: SubscriptionPlanType = SMS_PLAN_TYPE,
+    manager?: EntityManager,
   ) {
+    const repo = manager
+      ? manager.getRepository(UserSubscription)
+      : this.userSubscriptionRepo;
     const now = new Date();
     return (
-      (await this.userSubscriptionRepo
+      (await repo
         .createQueryBuilder('subscription')
         .innerJoinAndSelect('subscription.subscriptionPlan', 'plan')
         .where('subscription.userId = :userId', { userId })
@@ -195,6 +203,29 @@ export class UserSubscriptionService {
       .where('subscription.userId IN (:...userIds)', { userIds })
       .andWhere('plan.planType = :planType', {
         planType: PUBLIC_PAGE_PLAN_TYPE,
+      })
+      .orderBy('subscription.endDate', 'DESC')
+      .getMany();
+  }
+
+  /**
+   * همهٔ اشتراک‌های «پیامکی» یک فهرست کاربران (هر وضعیت و هر دوره).
+   *
+   * برای «لیست پلن‌های کاربران» در پنل مدیریت استفاده می‌شود؛ خروجی با
+   * `summarizeSmsSubscriptionsByUser` خلاصه می‌شود تا برای هر آرایشگر
+   * اشتراکِ فعالِ واقعی (status + بازهٔ زمانی) همراه با سهمیهٔ پیامک
+   * (کل/مصرف‌شده/باقی‌مانده/درصد) به‌دست بیاید و اشتراک‌های قدیمی با
+   * اشتراک فعال اشتباه نشوند.
+   */
+  async findSmsSubscriptionsForUsers(userIds: number[]) {
+    if (userIds.length === 0) return [];
+
+    return this.userSubscriptionRepo
+      .createQueryBuilder('subscription')
+      .innerJoinAndSelect('subscription.subscriptionPlan', 'plan')
+      .where('subscription.userId IN (:...userIds)', { userIds })
+      .andWhere('plan.planType = :planType', {
+        planType: SMS_PLAN_TYPE,
       })
       .orderBy('subscription.endDate', 'DESC')
       .getMany();
@@ -678,16 +709,36 @@ export class UserSubscriptionService {
     return (result.affected ?? 0) > 0;
   }
 
+  /**
+   * کسر اتمیک سهمیهٔ پیامک.
+   *
+   * • منبع تشخیص اشتراک فعال همان `getCurrent` است (نوع پلن sms + وضعیت
+   *   ACTIVE + بازهٔ startDate تا endDate).
+   * • خودِ کسر با یک UPDATE شرطی انجام می‌شود؛ دو درخواست هم‌زمان هرگز
+   *   نمی‌توانند از یک اعتبار دو بار عبور کنند و کسر «تکراری/اشتباه» ممکن
+   *   نیست.
+   * • اگر `manager` داده شود، خوانش و کسر **درون همان تراکنش** انجام
+   *   می‌شود؛ مثلاً در ثبت رزرو دستی، اگر ثبت نوبت شکست بخورد رول‌بک شامل
+   *   کسر سهمیه هم می‌شود و اعتباری به‌اشتباه از بین نمی‌رود.
+   */
   async deductSms(
     userId: number,
     count = 1,
     reason = 'ارسال پیامک',
+    manager?: EntityManager,
   ): Promise<UserSubscription> {
     if (count < 1) {
       throw new BadRequestException('تعداد پیامک برای کسر باید حداقل ۱ باشد');
     }
 
-    const subscription = await this.getCurrent(userId, SMS_PLAN_TYPE);
+    const subscriptionRepo = manager
+      ? manager.getRepository(UserSubscription)
+      : this.userSubscriptionRepo;
+    const smsUsageRepo = manager
+      ? manager.getRepository(SmsUsage)
+      : this.smsUsageRepo;
+
+    const subscription = await this.getCurrent(userId, SMS_PLAN_TYPE, manager);
 
     if (!subscription) {
       throw new BadRequestException(
@@ -710,7 +761,7 @@ export class UserSubscriptionService {
      * می‌توانستند هر دو از یک اعتبار عبور کنند و یکی از کسرها از بین برود
      * (اعتبار پیامک بیشتر از واقع مصرف می‌شد).
      */
-    const updateResult = await this.userSubscriptionRepo
+    const updateResult = await subscriptionRepo
       .createQueryBuilder()
       .update(UserSubscription)
       .set({ smsUsed: () => 'sms_used + :count' })
@@ -728,9 +779,9 @@ export class UserSubscriptionService {
       );
     }
 
-    // ثبت در دفتر مصرف پیامک
-    await this.smsUsageRepo.save(
-      this.smsUsageRepo.create({
+    // ثبت در دفتر مصرف پیامک (درون همان تراکنش، وقتی manager داده شده باشد)
+    await smsUsageRepo.save(
+      smsUsageRepo.create({
         userId,
         userSubscriptionId: subscription.id,
         count,
@@ -739,7 +790,7 @@ export class UserSubscriptionService {
     );
 
     return (
-      (await this.userSubscriptionRepo.findOne({
+      (await subscriptionRepo.findOne({
         where: { id: subscription.id },
       })) ?? subscription
     );

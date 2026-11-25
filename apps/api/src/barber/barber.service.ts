@@ -37,6 +37,8 @@ import { Service } from 'src/services/entities/service.entity';
 // نمی‌کنند). توکنِ تزریق صریح است.
 import type { PublicPageSubscriptionSummary } from 'src/subscription/public-page-subscription-summary';
 import { summarizePublicPageSubscriptionsByUser } from 'src/subscription/public-page-subscription-summary';
+import type { SmsSubscriptionSummary } from 'src/subscription/sms-subscription-summary';
+import { summarizeSmsSubscriptionsByUser } from 'src/subscription/sms-subscription-summary';
 import type { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
 import { Transaction } from 'src/wallet/entities/transaction.entity';
@@ -682,6 +684,7 @@ export class BarberService implements OnModuleInit {
     // در صورت خطا، فهرست مدیریت همچنان نمایش داده می‌شود و فقط این ستون
     // خالی می‌ماند — وضعیت اشتراک هرگز نباید لیست را بشکند.
     let subscriptionByUser = new Map<number, PublicPageSubscriptionSummary>();
+    let smsSubscriptionByUser = new Map<number, SmsSubscriptionSummary>();
     if (this.userSubscriptionService && users.length > 0) {
       try {
         const rows =
@@ -692,6 +695,23 @@ export class BarberService implements OnModuleInit {
       } catch (error) {
         this.logger.warn(
           `خواندن وضعیت اشتراک پروفایل اختصاصی برای فهرست مدیریت ناموفق بود: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
+      // وضعیت اشتراک «پیامکی» هر ردیف: پلن فعال واقعی (status + بازهٔ
+      // startDate تا endDate) و میزان مصرف سهمیهٔ پیامک. در صورت خطا فقط
+      // این ستون خالی می‌ماند و فهرست مدیریت نمی‌شکند.
+      try {
+        const smsRows =
+          await this.userSubscriptionService.findSmsSubscriptionsForUsers(
+            users.map(user => user.id),
+          );
+        smsSubscriptionByUser = summarizeSmsSubscriptionsByUser(smsRows);
+      } catch (error) {
+        this.logger.warn(
+          `خواندن وضعیت اشتراک پیامکی برای فهرست مدیریت ناموفق بود: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -720,6 +740,13 @@ export class BarberService implements OnModuleInit {
          * وجود ندارد.
          */
         publicPageSubscription: subscriptionByUser.get(user.id) ?? null,
+        /**
+         * وضعیت واقعی اشتراک «پیامکی» با سهمیه و مصرف آن: پلن فعال بر اساس
+         * status **و** بازهٔ startDate تا endDate تشخیص داده می‌شود؛
+         * اشتراک‌های قدیمی با اشتراک فعال فعلی اشتباه نمی‌شوند. `null`
+         * یعنی هیچ رکورد اشتراک پیامکی برای این کاربر وجود ندارد.
+         */
+        smsSubscription: smsSubscriptionByUser.get(user.id) ?? null,
       })),
       pagination: {
         page,

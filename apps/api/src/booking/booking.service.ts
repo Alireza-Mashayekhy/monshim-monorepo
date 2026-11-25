@@ -27,6 +27,7 @@ import {
 import { ReferralService } from 'src/referral/referral.service';
 import { Service } from 'src/services/entities/service.entity';
 import { SMS_PLAN_TYPE } from 'src/subscription/constants';
+import type { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
 import { WalletService } from 'src/wallet/wallet.service';
@@ -1209,24 +1210,39 @@ export class BookingsService {
       (sendDeposit ? 0 : CONFIRMATION_SMS_COST) +
       (wantsReminder ? REMINDER_SMS_COST : 0);
 
-    const smsEligible =
+    /**
+     * بررسی زودهنگام اشتراک/اعتبار فقط برای «پیام خطای دقیق» است؛ تصمیم
+     * نهایی کسر، خودِ لحظهٔ ثبت و اتمیک است (درون تراکنش). آرایشگرِ دارای
+     * اشتراک پیامکی معتبر اینجا بلاک نمی‌شود و مسیر پیامکی ادامه می‌یابد؛
+     * پیامِ «نداشتن اشتراک» فقط وقتی صادر می‌شود که واقعاً اشتراکِ معتبری
+     * (وضعیت ACTIVE و داخل بازهٔ startDate تا endDate) وجود نداشته باشد.
+     *
+     * مقدار `smsAvailability`:
+     *   • `undefined` — پیامکی لازم نیست (مسیر لینک بیعانه)، هیچ بررسی‌ای لازم نیست.
+     *   • `null`      — اشتراک پیامکی معتبری در این لحظه وجود ندارد.
+     *   • `{…}`       — اشتراک معتبر با اعتبار باقی‌مانده.
+     */
+    const smsAvailability =
       requiredSmsCredits > 0
-        ? await this.hasSmsCredit(barberUserId, requiredSmsCredits)
-        : true;
+        ? await this.getSmsAvailability(barberUserId)
+        : undefined;
 
-    if (wantsReminder && !smsEligible) {
-      throw new BadRequestException(
-        'برای ارسال پیامک یادآوری، اشتراک فعال و اعتبار پیامک کافی لازم است',
-      );
+    if (smsAvailability !== undefined) {
+      if (smsAvailability === null) {
+        throw new BadRequestException(
+          'برای ثبت نوبت با پیامک، ابتدا باید یکی از پلن‌های اشتراک پیامکی را خریداری کنید',
+        );
+      }
+
+      if (smsAvailability.remaining < requiredSmsCredits) {
+        throw new BadRequestException(
+          `اعتبار پیامک کافی نیست (پیامک باقی‌مانده: ${smsAvailability.remaining})`,
+        );
+      }
     }
 
-    if (!sendDeposit && !smsEligible) {
-      throw new BadRequestException(
-        'برای ثبت نوبت بدون لینک بیعانه، اشتراک پیامکی فعال و اعتبار کافی لازم است',
-      );
-    }
-
-    const sendReminder = wantsReminder && smsEligible;
+    // اگر کد به اینجا رسیده باشد، اعتبار لازم موجود است (یا پیامکی لازم نیست).
+    const sendReminder = wantsReminder;
 
     if (sendReminder && !dto.reminderHours) {
       throw new BadRequestException('زمان ارسال پیامک یادآوری را انتخاب کنید');
@@ -1306,52 +1322,21 @@ export class BookingsService {
     }
 
     /**
-     * بررسی تداخل با نوبت‌های تاییدشده همان روز.
-     * ثبت دستی پیش از این هیچ بررسی تداخلی نداشت و آرایشگر می‌توانست
-     * روی یک نوبت تاییدشده، نوبت دوم بگذارد.
+     * بررسی تداخل با نوبت‌های تاییدشدهٔ همان روز، کسر سهمیهٔ پیامک و درج
+     * نوبت‌ها باید **اتمیک** باشد؛ پس همهٔ آن‌ها به درون یک تراکنش منتقل
+     * شده‌اند. پیش از این بررسیِ تداخل بیرونِ تراکنش بود (دو درخواست هم‌زمان
+     * می‌توانستند هر دو از فیلتر عبور کنند و روی هم نوبت ثبت کنند) و کسر
+     * سهمیه هم پیش از ثبت نوبت انجام می‌شد (اگر ثبت نوبت شکست می‌خورد،
+     * اعتبار پیامک بدون نوبت از بین می‌رفت).
      */
-    const sameDayBookings = await this.bookingRepo.find({
-      where: {
-        barberId: barber.id,
-        date: dto.date,
-        holdsSlot: true,
-      },
-      relations: { service: true },
-    });
-
-    const activeHolds = await this.getActiveHoldIntervals(barber.id, dto.date);
-
-    const hasConflict =
-      sameDayBookings.some(existing => {
-        const existingStart = toMinutes(existing.time);
-        const existingEnd =
-          existingStart + (existing.service?.durationMinutes ?? 30);
-
-        return bookingStart < existingEnd && bookingEnd > existingStart;
-      }) || hasOverlap({ start: bookingStart, end: bookingEnd }, activeHolds);
-
-    if (hasConflict) {
-      throw new BadRequestException(
-        'این زمان با نوبت دیگری تداخل دارد. لطفاً ساعت دیگری انتخاب کنید',
-      );
-    }
-
     const smsCost =
       (sendDeposit ? 0 : CONFIRMATION_SMS_COST) +
       (sendReminder ? REMINDER_SMS_COST : 0);
 
-    if (smsCost > 0) {
-      const smsReasons = [
-        !sendDeposit ? 'تأیید' : null,
-        sendReminder ? 'یادآوری' : null,
-      ].filter(Boolean);
-
-      await this.userSubscriptionService.deductSms(
-        barberUserId,
-        smsCost,
-        `پیامک ${smsReasons.join(' و ')} نوبت دستی`,
-      );
-    }
+    const smsReasons = [
+      !sendDeposit ? 'تأیید' : null,
+      sendReminder ? 'یادآوری' : null,
+    ].filter(Boolean);
 
     const baseDepositToken = sendDeposit ? this.createDepositToken() : null;
     const depositRequestedAt = sendDeposit ? new Date() : null;
@@ -1390,8 +1375,84 @@ export class BookingsService {
       });
     });
 
-    const savedBookings = await this.bookingRepo.save(rowsToCreate);
+    // ===== تراکنش: قفل آرایشگر ← بررسی تداخل ← کسر پیامک ← درج نوبت‌ها =====
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
 
+    let savedBookings: Booking[];
+
+    try {
+      await queryRunner.startTransaction('READ COMMITTED');
+      const manager = queryRunner.manager;
+
+      // قفل ردیف پروفایل آرایشگر: درخواست‌های هم‌زمانِ ثبت دستی برای همین
+      // آرایشگر سری می‌شوند تا «بررسی تداخل ← کسر سهمیه ← درج نوبت» به‌صورت
+      // یک واحد اتمیک انجام شود (جلوگیری از Race Condition و کسر چندباره).
+      await manager.getRepository(BarberProfile).findOne({
+        where: { id: barber.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      // بررسی تداخل با نوبت‌های تاییدشدهٔ همان روز، **درون تراکنش** و با
+      // خوانش تازه (READ COMMITTED) تا نوبتِ ثبت‌شدهٔ درخواست قبلی دیده شود.
+      const sameDayBookings = await manager.getRepository(Booking).find({
+        where: {
+          barberId: barber.id,
+          date: dto.date,
+          holdsSlot: true,
+        },
+        relations: { service: true },
+      });
+
+      const activeHolds = await this.getActiveHoldIntervals(
+        barber.id,
+        dto.date,
+        manager,
+      );
+
+      const hasConflict =
+        sameDayBookings.some(existing => {
+          const existingStart = toMinutes(existing.time);
+          const existingEnd =
+            existingStart + (existing.service?.durationMinutes ?? 30);
+
+          return bookingStart < existingEnd && bookingEnd > existingStart;
+        }) || hasOverlap({ start: bookingStart, end: bookingEnd }, activeHolds);
+
+      if (hasConflict) {
+        throw new BadRequestException(
+          'این زمان با نوبت دیگری تداخل دارد. لطفاً ساعت دیگری انتخاب کنید',
+        );
+      }
+
+      /**
+       * کسر اتمیک سهمیهٔ پیامک **درون تراکنش**: اگر درج نوبت‌ها شکست بخورد،
+       * رول‌بک کسر سهمیه را هم برمی‌گرداند؛ پس ثبتِ ناموفق هرگز اعتباری هدر
+       * نمی‌دهد. شرط `sms_used + count <= sms_total` در خود UPDATE هم مانع
+       * کسر بیش از سهمیه حتی در درخواست هم‌زمان است.
+       */
+      if (smsCost > 0) {
+        await this.userSubscriptionService.deductSms(
+          barberUserId,
+          smsCost,
+          `پیامک ${smsReasons.join(' و ')} نوبت دستی`,
+          manager,
+        );
+      }
+
+      savedBookings = await manager.getRepository(Booking).save(rowsToCreate);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+
+    // پیامک پس از commit ارسال می‌شود؛ خطای پیامک نوبتِ ثبت‌شده را نمی‌شکند.
     await this.sendManualBookingSms(
       savedBookings,
       barber,
@@ -1470,31 +1531,37 @@ export class BookingsService {
     return randomBytes(DEPOSIT_TOKEN_BYTES).toString('hex');
   }
 
-  private async hasSmsCredit(
-    barberUserId: number,
-    requiredCredits = CONFIRMATION_SMS_COST,
-  ): Promise<boolean> {
-    /**
-     * منبع حقیقت یگانه برای «اشتراک پیامکی فعال» همان `getCurrent` در
-     * `UserSubscriptionService` است — همان منطق `/user-subscriptions/current`
-     * (نوع پلن، status، startDate/endDate و زمان فعلی). قبلاً این متد کوئریِ
-     * مستقل می‌داشت که «آخرین اشتراک هر نوع» را می‌گرفت؛ اشتراکِ «پروفایل
-     * اختصاصی» (بدون پیامک) با تاریخ پایانِ نزدیک‌تر انتخاب می‌شد و آرایشگر
-     * با اشتراک پیامکی معتبر، با پیام «اشتراک ندارد» مواجه می‌شد.
-     */
+  /**
+   * وضعیت اشتراک/اعتبار پیامکی آرایشگر برای پیام خطای دقیق.
+   *
+   * منبع حقیقت یگانه برای «اشتراک پیامکی فعال» همان `getCurrent` در
+   * `UserSubscriptionService` است — همان منطق `/user-subscriptions/current`
+   * (نوع پلن، status، startDate/endDate و زمان فعلی). قبلاً این متد کوئریِ
+   * مستقل می‌داشت که «آخرین اشتراک هر نوع» را می‌گرفت؛ اشتراکِ «پروفایل
+   * اختصاصی» (بدون پیامک) با تاریخ پایانِ نزدیک‌تر انتخاب می‌شد و آرایشگر
+   * با اشتراک پیامکی معتبر، با پیام «اشتراک ندارد» مواجه می‌شد.
+   *
+   * مقدار بازگشتی:
+   *   • `null`                       — هیچ اشتراک پیامکی معتبری در این لحظه نیست.
+   *   • `{ subscription, remaining }` — اشتراک معتبر + اعتبار باقی‌مانده.
+   */
+  private async getSmsAvailability(barberUserId: number): Promise<{
+    subscription: UserSubscription;
+    remaining: number;
+  } | null> {
     const subscription = await this.userSubscriptionService.getCurrent(
       barberUserId,
       SMS_PLAN_TYPE,
     );
 
     if (!subscription) {
-      return false;
+      return null;
     }
 
     const remaining =
       Number(subscription.smsTotal ?? 0) - Number(subscription.smsUsed ?? 0);
 
-    return remaining >= requiredCredits;
+    return { subscription, remaining };
   }
 
   /**

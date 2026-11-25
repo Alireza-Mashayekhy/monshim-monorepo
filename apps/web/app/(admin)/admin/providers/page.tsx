@@ -16,7 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useDebounce } from '@/hooks/use-debounce';
-import { toPersianDigits } from '@/lib/utils';
+import { cn, formatPrice, toPersianDigits } from '@/lib/utils';
 import {
   useAdminBarberManagementList,
   useDeleteBarberProfile,
@@ -25,6 +25,10 @@ import {
 } from '@/services/features/barber/admin.hooks';
 import type { BarberResponse } from '@/services/features/barber/types';
 import type { PublicPageSubscriptionStatus } from '@/services/features/public-page/types';
+import type {
+  SmsSubscriptionDisplayStatus,
+  SmsSubscriptionStatus,
+} from '@/services/features/subscription/types';
 
 type BarberAction =
   | { type: 'deactivate' | 'activate'; barber: BarberResponse }
@@ -34,6 +38,98 @@ type BarberAction =
 function formatFaDate(iso: string) {
   return toPersianDigits(new Date(iso).toLocaleDateString('fa-IR'));
 }
+
+const SMS_STATUS_BADGES: Record<
+  SmsSubscriptionDisplayStatus,
+  { label: string; className: string }
+> = {
+  active: {
+    label: 'فعال',
+    className: 'bg-emerald-50 text-emerald-700',
+  },
+  scheduled: {
+    label: 'در انتظار شروع',
+    className: 'bg-sky-50 text-sky-700',
+  },
+  expired: {
+    label: 'منقضی',
+    className: 'bg-amber-50 text-amber-800',
+  },
+  canceled: {
+    label: 'لغوشده',
+    className: 'bg-red-50 text-red-700',
+  },
+};
+
+/**
+ * «اشتراک پیامکی» هر ردیف در مدیریت آرایشگرها.
+ *
+ * منبع: خلاصهٔ مرکزی بک‌اند (`summarizeSmsSubscriptions`) — پلن فعال بر اساس
+ * وضعیت واقعی اشتراک **و** بازهٔ startDate تا endDate تشخیص داده می‌شود؛
+ * اشتراک‌های قدیمی با اشتراک فعال فعلی اشتباه نمی‌شوند. سهمیه، مصرف و درصد
+ * از مقادیر واقعی دیتابیس (sms_total / sms_used) می‌آیند، نه محاسبهٔ فرانت.
+ */
+function renderSmsSubscription(subscription: SmsSubscriptionStatus | null) {
+  if (!subscription) {
+    return (
+      <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">
+        بدون اشتراک
+      </span>
+    );
+  }
+
+  const badge = SMS_STATUS_BADGES[subscription.display];
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span
+          className={cn(
+            'w-fit rounded-full px-2.5 py-1 text-xs font-semibold',
+            badge.className,
+          )}
+        >
+          {badge.label}
+        </span>
+        <span className="text-xs font-semibold text-gray-900">
+          {subscription.planName || '—'}
+        </span>
+      </div>
+
+      <span className="text-xs text-muted-foreground" dir="rtl">
+        از {formatFaDate(subscription.startDate)} تا{' '}
+        {formatFaDate(subscription.endDate)}
+      </span>
+
+      <span className="text-xs text-muted-foreground">
+        مبلغ: {toPersianDigits(formatPrice(subscription.price))} تومان
+      </span>
+
+      <div className="mt-0.5 min-w-36">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200/70">
+          <div
+            className={cn(
+              'h-full rounded-full',
+              subscription.usagePercent >= 90
+                ? 'bg-red-400'
+                : subscription.usagePercent >= 70
+                  ? 'bg-orange-400'
+                  : 'bg-emerald-500',
+            )}
+            style={{ width: `${Math.max(subscription.usagePercent, 2)}%` }}
+          />
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          مصرف پیامک: {toPersianDigits(subscription.smsUsed)} از{' '}
+          {toPersianDigits(subscription.smsTotal)} · باقی‌مانده:{''}
+          {toPersianDigits(subscription.smsRemaining)} (
+          {toPersianDigits(subscription.usagePercent)}٪ مصرف)
+        </p>
+      </div>
+    </div>
+  );
+}
+
 
 /**
  * «اشتراک صفحهٔ اختصاصی» هر ردیف در مدیریت آرایشگرها.
@@ -193,6 +289,7 @@ export default function AdminBarbersPage() {
               <TableHead>شهر</TableHead>
               <TableHead>وضعیت پروفایل</TableHead>
               <TableHead>وضعیت نمایش</TableHead>
+              <TableHead>اشتراک پیامکی و مصرف سهمیه</TableHead>
               <TableHead>اشتراک صفحهٔ اختصاصی</TableHead>
               <TableHead className="min-w-52">عملیات</TableHead>
             </TableRow>
@@ -201,7 +298,7 @@ export default function AdminBarbersPage() {
             {isLoading ? (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={9}
                   className="py-10 text-center text-muted-foreground"
                 >
                   در حال دریافت فهرست آرایشگرها…
@@ -210,7 +307,7 @@ export default function AdminBarbersPage() {
             ) : isError ? (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={9}
                   className="py-10 text-center text-destructive"
                 >
                   دریافت فهرست آرایشگرها ناموفق بود. صفحه را بازخوانی کنید.
@@ -219,7 +316,7 @@ export default function AdminBarbersPage() {
             ) : barbers.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={9}
                   className="py-10 text-center text-muted-foreground"
                 >
                   آرایشگری پیدا نشد.
@@ -268,6 +365,9 @@ export default function AdminBarbersPage() {
                         {barber.isAdminAccount ? ' (دارای نقش مدیر)' : ''}
                       </p>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    {renderSmsSubscription(barber.smsSubscription ?? null)}
                   </TableCell>
                   <TableCell>
                     {renderPublicPageSubscription(barber.publicPageSubscription)}
