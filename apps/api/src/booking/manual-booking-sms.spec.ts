@@ -5,6 +5,17 @@ jest.mock('@nestjs/schedule', () => ({
   CronExpression: { EVERY_10_MINUTES: '0 */10 * * * *' },
 }));
 
+// خودترمیمیِ تنبلِ اسکیما در این تست واحد mock می‌شود؛ رفتار واقعیِ آن
+// (ساخت جدول/ستونِ جامانده) در manual-booking-sms.e2e.spec.ts پوشش دارد.
+jest.mock('src/common/utils/schema-guard.util', () => ({
+  ensureEntitySchema: jest.fn().mockResolvedValue({
+    table: 'sms_usages',
+    created: false,
+    addedColumns: [],
+    warnings: [],
+  }),
+}));
+
 import { UserSubscriptionStatus } from 'src/subscription/entities/user-subscription.entity';
 
 import { BookingsService } from './booking.service';
@@ -235,6 +246,7 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
       userSubscriptionService,
       bookingSmsService,
       baleNotificationService,
+      clubService,
     };
   }
 
@@ -538,6 +550,27 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
     expect(conflictRead).toBeLessThan(deduct);
     expect(deduct).toBeLessThan(insert);
     expect(insert).toBeLessThan(commit);
+  });
+
+  it('does not fail the booking when club sync fails after commit', async () => {
+    const { service, clubService, queryRunner } = createHarness(5);
+    // همگام‌سازی باشگاه پس از commit است؛ شکستش نباید نوبتِ ثبت‌شده را
+    // به خطای ۵۰۰ تبدیل کند (وگرنه کاربر با تلاش دوباره نوبت تکراری می‌سازد).
+    clubService.addFromSuccessfulBooking.mockRejectedValue(
+      new Error('club sync down'),
+    );
+
+    const saved = await service.createManualByBarber(100, {
+      clubCustomerId: 'club-member-1',
+      serviceIds: ['service-1'],
+      date,
+      time: '15:30',
+      sendDepositLink: false,
+    });
+
+    expect(saved.bookings).toHaveLength(1);
+    expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
+    expect(clubService.addFromSuccessfulBooking).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT send any Bale notification when a customer creates an unpaid booking request', async () => {

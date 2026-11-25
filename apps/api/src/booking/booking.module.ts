@@ -13,6 +13,7 @@ import { WalletModule } from 'src/wallet/wallet.module';
 
 import { BookingsController } from './booking.controller';
 import { BookingsService } from './booking.service';
+import { BookingSchemaService } from './booking-schema.service';
 import { Booking } from './entities/booking.entity';
 import { SlotHold } from './entities/slot-hold.entity';
 
@@ -34,7 +35,13 @@ import { SlotHold } from './entities/slot-hold.entity';
     SubscriptionModule,
   ],
   controllers: [BookingsController],
-  providers: [BookingsService],
+  providers: [
+    BookingsService,
+    // گارد اسکیمای جدول‌های رزرو (bookings/slot_holds) — در production با
+    // synchronize=false، نبودِ ستون‌های مسیر «ثبت رزرو دستی» روی bookings
+    // فقط همین مسیر را با 500 می‌شکند؛ جزئیات در خود سرویس.
+    BookingSchemaService,
+  ],
   exports: [BookingsService],
 })
 export class BookingModule {}

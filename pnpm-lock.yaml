@@ -51,7 +51,7 @@ importers:
         version: 6.5.0(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3)(reflect-metadata@0.2.2)
       '@nestjs/typeorm':
         specifier: 11.0.3
-        version: 11.0.3(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@1.1.1(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3)))
+        version: 11.0.3(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@1.1.1(better-sqlite3@13.2.0)(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3)))
       '@sentry/nestjs':
         specifier: 11.0.0
         version: 11.0.0(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3)(rollup@4.68.0)(webpack@5.106.2)
@@ -111,7 +111,7 @@ importers:
         version: 0.35.4(@types/node@24.13.4)
       typeorm:
         specifier: 1.1.1
-        version: 1.1.1(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3))
+        version: 1.1.1(better-sqlite3@13.2.0)(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3))
     devDependencies:
       '@eslint/eslintrc':
         specifier: 3.3.7
@@ -137,6 +137,9 @@ importers:
       '@types/bcrypt':
         specifier: 6.0.0
         version: 6.0.0
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/compression':
         specifier: 1.8.1
         version: 1.8.1
@@ -158,6 +161,9 @@ importers:
       '@types/supertest':
         specifier: 7.2.1
         version: 7.2.1
+      better-sqlite3:
+        specifier: ^13.2.0
+        version: 13.2.0
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
@@ -5161,6 +5167,12 @@ packages:
         integrity: sha512-/oJGukuH3D2+D+3H4JWLaAsJ/ji86dhRidzZ/Od7H/i8g+aCmvkeCc6Ni/f9uxGLSQVCRZkX2/lqEFG2BvWtlQ==,
       }
 
+  '@types/better-sqlite3@9.6.0':
+    resolution:
+      {
+        integrity: sha512-ZEEwBSgMu7GYJOynoagg5X9JbxfL6dTJDsgViJIqh67jV44kyOr9RXfmFjLK5rzC4MWssP06t9hu/JwGDnUbCg==,
+      }
+
   '@types/body-parser@1.19.6':
     resolution:
       {
@@ -6214,6 +6226,13 @@ packages:
         integrity: sha512-cU8v/EGSrnH+HnxV2z0J7/blxH8gq7Xh2JFT6Aroax7UohdmiJJlxApMxtKfuI7z68NvvVcmR78k2LbT6efhRg==,
       }
     engines: { node: '>= 18' }
+
+  better-sqlite3@13.2.0:
+    resolution:
+      {
+        integrity: sha512-Z8Q/9x/uNyKxA1v4FNodyItRVRw1TeKBrmj32JhxhR0ceNcBY+wMobt/Bv7M7TzwPAXjnZRtNaEsATnUZSKWZQ==,
+      }
+    engines: { node: '>=22' }
 
   bl@4.1.0:
     resolution:
@@ -9692,6 +9711,7 @@ packages:
       {
         integrity: sha512-AGK2yQKIjRuqnc6VkX2Xj5d+QW8xZ87pa1UK6yA6ouUyuxfHuMP6umE5QK7UmTeOAymo+Zx1Fxiuw9rVx8taHQ==,
       }
+    deprecated: This package is no longer needed on supported Node.js versions. Node.js 16+ includes AbortController and AbortSignal as built-in globals. All Node.js versions requiring this polyfill are end-of-life. Use the built-in globals instead.
 
   node-addon-api@7.1.1:
     resolution:
@@ -10159,6 +10179,7 @@ packages:
         integrity: sha512-Khh/tERVBn0I1499dvBSHY0pWJloMJWUxDsOBM0CCDPAcVZ10Jl2L1qy1f19uEX22spa8Mv7DCdEQJc0cGwBhQ==,
       }
     engines: { node: '>=4' }
+    deprecated: Double-escapes CSS Modules class names (#362). Use 7.2.1.
 
   postcss@8.4.31:
     resolution:
@@ -13478,13 +13499,13 @@ snapshots:
       '@nestjs/core': 11.2.3(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.2.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
 
-  '@nestjs/typeorm@11.0.3(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@1.1.1(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3)))':
+  '@nestjs/typeorm@11.0.3(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@1.1.1(better-sqlite3@13.2.0)(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3)))':
     dependencies:
       '@nestjs/common': 11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/core': 11.2.3(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.2.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
       rxjs: 7.8.2
-      typeorm: 1.1.1(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3))
+      typeorm: 1.1.1(better-sqlite3@13.2.0)(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3))
 
   '@next/env@16.2.6': {}
 
@@ -15293,6 +15314,10 @@ snapshots:
     dependencies:
       '@types/node': 24.13.4
 
+  '@types/better-sqlite3@9.6.0':
+    dependencies:
+      '@types/node': 24.13.4
+
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
@@ -15961,6 +15986,10 @@ snapshots:
     dependencies:
       node-addon-api: 8.9.2
       node-gyp-build: 4.8.4
+
+  better-sqlite3@13.2.0:
+    dependencies:
+      node-addon-api: 8.9.2
 
   bl@4.1.0:
     dependencies:
@@ -19689,7 +19718,7 @@ snapshots:
 
   typedarray@0.0.6: {}
 
-  typeorm@1.1.1(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3)):
+  typeorm@1.1.1(better-sqlite3@13.2.0)(mysql2@3.24.4(@types/node@24.13.4))(redis@5.12.1(@opentelemetry/api@1.10.0))(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3)):
     dependencies:
       '@sqltools/formatter': 1.2.5
       ansis: 4.5.0
@@ -19702,6 +19731,7 @@ snapshots:
       tslib: 2.9.1
       yargs: 18.2.0
     optionalDependencies:
+      better-sqlite3: 13.2.0
       mysql2: 3.24.4(@types/node@24.13.4)
       redis: 5.12.1(@opentelemetry/api@1.10.0)
       ts-node: 10.9.2(@types/node@24.13.4)(typescript@5.9.3)

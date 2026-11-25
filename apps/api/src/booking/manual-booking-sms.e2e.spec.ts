@@ -21,8 +21,13 @@
  *     اینجا نسخهٔ «جدول دفتر مصرف ناموجود» را داریم که تراکنش را رول‌بک می‌کند.
  *  ۱۰) درخواست هم‌زمان/تداخلی ← رزرو دوم رد می‌شود و سهمیه دست‌نخورده می‌ماند
  *  ۱۱) ثبت رزرو بدون ارسال پیامک (لینک بیعانه) ← بدون هیچ کسری
- *  ۱۲) نبودِ جدول `sms_usages` (حالت واقعی production) ← شکست مشخص + رول‌بک کامل
+ *  ۱۲) نبودِ جدول `sms_usages` بدون اجرای گارد بوت ← خودترمیمیِ تنبلِ مسیر
+ *      (`ensureManualBookingSchema`) جدول را می‌سازد و همان درخواست موفق می‌شود
  *  ۱۳) بعد از اجرای گارد اسکیما (`SubscriptionSchemaService`) ← همان درخواست موفق
+ *  ۱۴) ستون‌های جاماندهٔ `bookings` (حالت واقعی production) + گارد بوت
+ *      (`BookingSchemaService`) ← ستون‌ها اضافه و همان درخواست موفق می‌شود
+ *  ۱۵) ستون‌های جاماندهٔ `bookings` + نبودِ `sms_usages` بدون هیچ گاردی ←
+ *      خودترمیمیِ تنبل هر دو را می‌سازد و همان درخواست موفق می‌شود
  *
  * نکتهٔ فنی: SQLite دو قابلیت MySQL را ندارد و برای اجرای همان مسیرِ کد، دو
  * پچ محدود در ابتدای فایل انجام می‌شود (بدون تغییر رفتار منطق سرویس):
@@ -56,7 +61,7 @@ import {
 } from 'src/subscription/entities/user-subscription.entity';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
-import { DataSource, SelectQueryBuilder } from 'typeorm';
+import { DataSource, SelectQueryBuilder, Table } from 'typeorm';
 import { BetterSqlite3QueryRunner } from 'typeorm/driver/better-sqlite3/BetterSqlite3QueryRunner';
 import { AbstractSqliteDriver } from 'typeorm/driver/sqlite-abstract/AbstractSqliteDriver';
 import { DateUtils } from 'typeorm/util/DateUtils';
@@ -363,6 +368,49 @@ const baseDto = (world: World, time: string) => ({
   sendDepositLink: false,
 });
 
+/** ستون‌های مسیر «ثبت رزرو دستی» روی bookings که در production جامانده بودند. */
+const BOOKING_MANUAL_COLUMNS = [
+  'send_deposit_link',
+  'send_sms_reminder',
+  'reminder_hours',
+  'reminder_sent_at',
+  'deposit_token',
+  'deposit_paid_at',
+] as const;
+
+/**
+ * شبیه‌سازی production: حذف ستون‌های مسیر ثبت دستی از جدول bookings.
+ *
+ * SQLite اجازهٔ DROP COLUMN روی ستونِ دارای UNIQUE (مثل deposit_token)
+ * نمی‌دهد؛ پس جدول bookings را از روی متادیتای entity و **بدون** آن
+ * ستون‌ها (و ایندکس/محدودیت‌های مربوطه) دوباره می‌سازیم. چون در این
+ * سناریوها هنوز رزرو ساخته نشده، حذف جدول داده‌ای از دست نمی‌دهد.
+ */
+async function dropBookingManualColumns(world: World) {
+  const metadata = world.dataSource.getMetadata(Booking);
+  const table = Table.create(metadata, world.dataSource.driver);
+  const manual = new Set<string>(BOOKING_MANUAL_COLUMNS);
+  table.columns = table.columns.filter(column => !manual.has(column.name));
+  table.indices = table.indices.filter(index =>
+    index.columnNames.every(name => !manual.has(name)),
+  );
+  table.uniques = table.uniques.filter(unique =>
+    unique.columnNames.every(name => !manual.has(name)),
+  );
+  table.checks = table.checks.filter(
+    check => !(check.columnNames ?? []).some(name => manual.has(name)),
+  );
+
+  const runner = world.dataSource.createQueryRunner();
+  await runner.connect();
+  try {
+    await runner.query('DROP TABLE bookings');
+    await runner.createTable(table, false);
+  } finally {
+    await runner.release();
+  }
+}
+
 maybeDescribe(
   'BookingsService.createManualByBarber — real-SQL e2e (SMS plan)',
   () => {
@@ -593,26 +641,28 @@ maybeDescribe(
       await world.cleanup();
     });
 
-    it('۱۲. نبودِ جدول sms_usages (حالت واقعی production) ← شکست مشخص، رول‌بک کامل، بدون رزرو', async () => {
+    it('۱۲. نبودِ جدول sms_usages بدون گارد بوت ← خودترمیمیِ تنبل جدول را می‌سازد و درخواست موفق می‌شود', async () => {
       const world = await buildWorld();
       await grantSmsPlan(world, { smsTotal: 100 });
-      // شبیه‌سازی پایگاه دادهٔ production بدون جدول دفتر مصرف پیامک
+      // شبیه‌سازی پایگاه دادهٔ production بدون جدول دفتر مصرف پیامک و
+      // بدون اجرای گارد بوت (مثلاً استقرار قدیمی یا شکست DDL هنگام بوت).
       await world.dataSource.query('DROP TABLE sms_usages');
 
-      const error = await world.service
-        .createManualByBarber(world.ids.barberUserId, baseDto(world, '14:00'))
-        .catch((e: unknown) => e);
+      // خودترمیمیِ تنبلِ `createManualByBarber` (پیش از تراکنش) جدول را
+      // می‌سازد؛ دیگر نیازی به اجرای دستی گارد بوت نیست.
+      const result = (await world.service.createManualByBarber(
+        world.ids.barberUserId,
+        baseDto(world, '14:00'),
+      )) as { bookings: Booking[] };
 
-      // شکست باید از نوع خطای پایگاه داده باشد (در MySQL: ER_NO_SUCH_TABLE)
-      expect((error as Error).message).toMatch(/sms_usages/i);
-
-      // تراکنش کامل رول‌بک شده: نه رزرو، نه کسر سهمیه، نه ردیف مصرف
+      expect(result.bookings).toHaveLength(1);
       const bookings = await world.repos.bookingRepo.find();
-      const usages = await world.repos.smsUsageRepo.find().catch(() => []);
+      const usages = await world.repos.smsUsageRepo.find();
       const subs = await world.repos.subscriptionRepo.find();
-      expect(bookings).toHaveLength(0);
-      expect(usages).toHaveLength(0);
-      expect(subs[0].smsUsed).toBe(0);
+      expect(bookings).toHaveLength(1);
+      expect(usages).toHaveLength(1);
+      expect(usages[0].count).toBe(2);
+      expect(subs[0].smsUsed).toBe(2);
 
       await world.cleanup();
     });
@@ -634,6 +684,56 @@ maybeDescribe(
       expect(result.bookings).toHaveLength(1);
       const subs = await world.repos.subscriptionRepo.find();
       const usages = await world.repos.smsUsageRepo.find();
+      expect(subs[0].smsUsed).toBe(2);
+      expect(usages).toHaveLength(1);
+
+      await world.cleanup();
+    });
+
+    it('۱۴. ستون‌های جاماندهٔ bookings + گارد بوت (BookingSchemaService) ← ستون‌ها اضافه و درخواست موفق می‌شود', async () => {
+      const world = await buildWorld();
+      await grantSmsPlan(world, { smsTotal: 100 });
+      // شبیه‌سازی production: جدول bookings بدون ستون‌های مسیر ثبت دستی
+      // (این ستون‌ها هیچ فایل DDL کاملی نداشتند).
+      await dropBookingManualColumns(world);
+
+      // همان کاری که BookingSchemaService هنگام بوت می‌کند:
+      const report = await ensureEntitySchema(world.dataSource, Booking);
+      expect(report.addedColumns).toEqual(
+        expect.arrayContaining([...BOOKING_MANUAL_COLUMNS]),
+      );
+
+      const result = (await world.service.createManualByBarber(
+        world.ids.barberUserId,
+        baseDto(world, '16:00'),
+      )) as { bookings: Booking[] };
+
+      expect(result.bookings).toHaveLength(1);
+      const subs = await world.repos.subscriptionRepo.find();
+      const usages = await world.repos.smsUsageRepo.find();
+      expect(subs[0].smsUsed).toBe(2);
+      expect(usages).toHaveLength(1);
+
+      await world.cleanup();
+    });
+
+    it('۱۵. ستون‌های جاماندهٔ bookings + نبودِ sms_usages بدون هیچ گاردی ← خودترمیمیِ تنبل هر دو را می‌سازد', async () => {
+      const world = await buildWorld();
+      await grantSmsPlan(world, { smsTotal: 100 });
+      // بدترین حالت production: نه گارد بوت اجرا شده، نه DDL دستی.
+      await dropBookingManualColumns(world);
+      await world.dataSource.query('DROP TABLE sms_usages');
+
+      const result = (await world.service.createManualByBarber(
+        world.ids.barberUserId,
+        baseDto(world, '17:00'),
+      )) as { bookings: Booking[] };
+
+      expect(result.bookings).toHaveLength(1);
+      const bookings = await world.repos.bookingRepo.find();
+      const subs = await world.repos.subscriptionRepo.find();
+      const usages = await world.repos.smsUsageRepo.find();
+      expect(bookings).toHaveLength(1);
       expect(subs[0].smsUsed).toBe(2);
       expect(usages).toHaveLength(1);
 

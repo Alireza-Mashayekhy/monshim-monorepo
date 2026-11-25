@@ -14,9 +14,11 @@ import { BarberProfile } from 'src/barber/entities/barber.entity';
 import { BarberWorkHours } from 'src/barber/entities/barber-work-hours.entity';
 import { ClubService } from 'src/club/club.service';
 import { CreateManualBookingDto } from 'src/club/dto/create-manual-booking.dto';
+import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { DEPOSIT_TOKEN_BYTES } from 'src/common/constants/constants';
 import { getPagination } from 'src/common/database/query';
 import { toEnglishDigits } from 'src/common/utils/digits.util';
+import { ensureEntitySchema } from 'src/common/utils/schema-guard.util';
 import { BookingSmsService } from 'src/notification/booking-sms.service';
 import { extractBaseDepositToken } from 'src/payment/deposit-amount';
 import {
@@ -27,6 +29,7 @@ import {
 import { ReferralService } from 'src/referral/referral.service';
 import { Service } from 'src/services/entities/service.entity';
 import { SMS_PLAN_TYPE } from 'src/subscription/constants';
+import { SmsUsage } from 'src/subscription/entities/sms-usage.entity';
 import type { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
@@ -1375,6 +1378,21 @@ export class BookingsService {
       });
     });
 
+    /**
+     * خودترمیمیِ اسکیمای مسیر ثبت دستی پیش از شروع تراکنش.
+     *
+     * گاردهای بوت (`SubscriptionSchemaService` و `BookingSchemaService`)
+     * معمولاً جدول `sms_usages` و ستون‌های `bookings`/`slot_holds` را
+     * می‌سازند، اما اگر آن گاردها به هر دلیلی اجرا نشده باشند (استقرار
+     * قدیمی، شکستِ موقت DDL هنگام بوت)، INSERT دفتر مصرف یا ردیف رزرو
+     * درون تراکنش شکست می‌خورد و کل رزرو با خطای ۵۰۰ رول‌بک می‌شود —
+     * دقیقاً نشانهٔ تیکت «رزرو دستی با پلن پیامکی». این بررسیِ idempotent
+     * و سبک (پیش از تراکنش، تا DDL احتمالی باعث implicit-commit نشود)
+     * مسیر را خودترمیم می‌کند؛ شکستش هم عمداً نادیده گرفته می‌شود تا
+     * خطای واقعیِ INSERT با پیام مشخص سطح بیاید.
+     */
+    await this.ensureManualBookingSchema();
+
     // ===== تراکنش: قفل آرایشگر ← بررسی تداخل ← کسر پیامک ← درج نوبت‌ها =====
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -1461,16 +1479,57 @@ export class BookingsService {
       baseDepositToken,
     );
 
-    await this.clubService.addFromSuccessfulBooking({
-      barberId: barber.id,
-      customerId: member.customerId,
-    });
+    /**
+     * همگام‌سازی باشگاه مشتریان پس از commit است؛ شکستش نباید نوبتِ
+     * ثبت‌شده را به خطای ۵۰۰ تبدیل کند (کاربر خطا می‌بیند ولی نوبت ثبت
+     * شده و با تلاش دوباره، نوبت تکراری ساخته می‌شود). فقط لاگ می‌شود.
+     */
+    try {
+      await this.clubService.addFromSuccessfulBooking({
+        barberId: barber.id,
+        customerId: member.customerId,
+      });
+    } catch (error) {
+      this.logger.error(
+        `همگام‌سازی باشگاه مشتریان پس از ثبت نوبت دستی ناموفق بود ` +
+          `(نوبت ثبت شده است): ${String(error)}`,
+      );
+    }
 
     return {
       ...savedBookings[0],
       bookings: savedBookings,
       depositToken: baseDepositToken,
     };
+  }
+
+  /**
+   * تضمین وجودِ جدول‌ها/ستون‌های مسیر ثبت رزرو دستی پیش از تراکنش.
+   *
+   * مکملِ گاردهای بوت (`SubscriptionSchemaService` برای `sms_usages` و
+   * `BookingSchemaService` برای `bookings`/`slot_holds`) است: اگر آن
+   * گاردها به هر دلیلی اجرا نشده باشند، این بررسیِ idempotent
+   * جدول/ستون‌های جامانده را همین‌جا می‌سازد تا INSERT دفتر مصرف و ردیف
+   * رزرو درون تراکنش شکست نخورند. با همان پرچم `ENABLE_SCHEMA_MUTATIONS`
+   * کنترل می‌شود و هر خطایی فقط لاگ می‌شود (خطای واقعیِ INSERT بعداً با
+   * پیام مشخص سطح می‌آید).
+   */
+  private async ensureManualBookingSchema(): Promise<void> {
+    if (!isRuntimeFlagEnabled('ENABLE_SCHEMA_MUTATIONS')) {
+      return;
+    }
+
+    for (const entity of [SmsUsage, Booking, SlotHold]) {
+      try {
+        await ensureEntitySchema(this.dataSource, entity);
+      } catch (error) {
+        this.logger.warn(
+          `تضمین اسکیمای مسیر ثبت رزرو دستی (${
+            typeof entity === 'function' ? entity.name : String(entity)
+          }) ناموفق بود: ${String(error)}`,
+        );
+      }
+    }
   }
 
   private async sendManualBookingSms(

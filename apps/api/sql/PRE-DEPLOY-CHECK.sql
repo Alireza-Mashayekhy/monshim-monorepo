@@ -124,4 +124,45 @@ UNION ALL
 SELECT 'sms_usages (table — دفتر مصرف پیامک؛ نبودش کسر سهمیهٔ پیامکِ ثبت رزرو دستی را می‌شکند)',
        IF(COUNT(*) > 0, 'OK', 'MISSING')
 FROM INFORMATION_SCHEMA.TABLES
-WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sms_usages';
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sms_usages'
+
+UNION ALL
+SELECT 'bookings.send_deposit_link (ثبت رزرو دستی — لینک بیعانه)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'
+  AND COLUMN_NAME = 'send_deposit_link'
+
+UNION ALL
+SELECT 'bookings.send_sms_reminder (ثبت رزرو دستی — پیامک یادآوری)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'
+  AND COLUMN_NAME = 'send_sms_reminder'
+
+UNION ALL
+SELECT 'bookings.reminder_hours (ثبت رزرو دستی — ساعت یادآوری)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'
+  AND COLUMN_NAME = 'reminder_hours'
+
+UNION ALL
+SELECT 'bookings.reminder_sent_at (جلوگیری از یادآوری تکراری)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'
+  AND COLUMN_NAME = 'reminder_sent_at'
+
+UNION ALL
+SELECT 'bookings.deposit_paid_at (پرداخت بیعانه از طریق لینک)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'
+  AND COLUMN_NAME = 'deposit_paid_at'
+
+UNION ALL
+SELECT 'slot_holds (table — نگه‌داشتن موقت ساعت هنگام پرداخت آنلاین)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'slot_holds';
