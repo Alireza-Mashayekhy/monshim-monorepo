@@ -31,6 +31,7 @@ import { usePaySubscription } from '@/services/features/payment/hooks';
 import {
   useActiveSubscriptionPlans,
   useCurrentUserSubscription,
+  useUserSubscriptions,
 } from '@/services/features/subscription/hooks';
 
 function formatDate(date: string) {
@@ -80,6 +81,14 @@ export default function SubscriptionPage() {
     refetch: refetchSubscription,
   } = useCurrentUserSubscription();
 
+  // سابقهٔ اشتراک‌ها فقط وقتی خوانده می‌شود که اشتراک فعالی یافت نشده است؛
+  // از آنجا وضعیت واقعی آخرین اشتراک (منقضی/لغوشده) از پاسخ بک‌اند نشان
+  // داده می‌شود، نه از حدس فرانت‌اند.
+  const { data: historyData } = useUserSubscriptions({
+    enabled:
+      !currentLoading && !currentError && !currentSubscription?.data,
+  });
+
   const paySubscriptionMutation = usePaySubscription();
 
   const currentPlan = currentSubscription?.data?.subscriptionPlan ?? null;
@@ -125,6 +134,27 @@ export default function SubscriptionPage() {
     smsTotal > 0 ? Math.min(100, Math.round((smsUsed / smsTotal) * 100)) : 0;
 
   const now = useNow() * MINUTE_MS;
+
+  /**
+   * آخرین اشتراک کاربر (جدیدترین بر اساس createdAt) برای نمایش وضعیت
+   * منقضی/لغوشده/در انتظارِ شروع وقتی اشتراک فعالی وجود ندارد. وضعیت
+   * نمایشی فقط از status واقعی بک‌اند و تاریخ‌های سرور مشتق می‌شود؛ هیچ
+   * تشخیص «فعال بودن» در فرانت انجام نمی‌شود و داده از API واقعی می‌آید.
+   */
+  const latestSubscription = historyData?.data?.[0] ?? null;
+  const latestScheduledStart =
+    latestSubscription?.status === 'active' &&
+    latestSubscription.startDate &&
+    new Date(latestSubscription.startDate).getTime() > now;
+  const latestInactiveLabel = (() => {
+    if (!latestSubscription || latestScheduledStart) return null;
+    if (latestSubscription.status === 'canceled') return 'لغوشده';
+    const ended =
+      latestSubscription.endDate &&
+      new Date(latestSubscription.endDate).getTime() <= now;
+    if (latestSubscription.status === 'expired' || ended) return 'منقضی‌شده';
+    return null;
+  })();
 
   const daysLeft = currentSubscription?.data?.endDate
     ? Math.ceil(
@@ -263,6 +293,45 @@ export default function SubscriptionPage() {
               >
                 تلاش مجدد
               </Button>
+            </div>
+          ) : latestScheduledStart ? (
+            <div className="py-4 text-center space-y-1.5">
+              <div className="w-11 h-11 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center mx-auto">
+                <Gem size={20} />
+              </div>
+
+              <h2 className="text-sm font-black text-gray-900">
+                تمدید شما در انتظار شروع است
+              </h2>
+
+              <p className="text-xs text-gray-400">
+                پلن «{latestSubscription?.subscriptionPlan?.name ?? '—'}» از
+                تاریخ{' '}
+                {latestSubscription?.startDate
+                  ? formatDate(latestSubscription.startDate)
+                  : '—'}
+                {' '}به‌صورت خودکار فعال می‌شود.
+              </p>
+            </div>
+          ) : latestInactiveLabel ? (
+            <div className="py-4 text-center space-y-1.5">
+              <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+                <Gem size={20} />
+              </div>
+
+              <h2 className="text-sm font-black text-gray-900">
+                اشتراک شما {latestInactiveLabel} است
+              </h2>
+
+              <p className="text-xs text-gray-400">
+                پلن «{latestSubscription?.subscriptionPlan?.name ?? '—'}» با
+                تاریخ پایان{' '}
+                {latestSubscription?.endDate
+                  ? formatDate(latestSubscription.endDate)
+                  : '—'}
+                {' '}به پایان رسیده است. برای ادامهٔ امکانات پیامکی، یکی از
+                پلن‌های زیر را خریداری کنید.
+              </p>
             </div>
           ) : (
             <div className="py-4 text-center space-y-1.5">
