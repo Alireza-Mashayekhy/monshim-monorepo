@@ -13,6 +13,7 @@ import {
   BarberProfile,
   getBarberChangedFieldLabels,
 } from 'src/barber/entities/barber.entity';
+import { ClubCustomer } from 'src/club/entities/club-customer.entity';
 import {
   applySearch,
   applySort,
@@ -311,6 +312,17 @@ export class UsersService {
 
     if (!user) throw new NotFoundException();
 
-    return this.usersRepository.delete(id);
+    /**
+     * در production (`synchronize=false`) قید FK روی `club_customers.customer_id`
+     * وجود ندارد؛ حذف hard حساب کاربری، رکوردهای باشگاه را «یتیم» می‌گذاشت و
+     * نوبتِ دستیِ بعدیِ آرایشگر روی چنین رکوردی با خطای کلید خارجی روی
+     * `bookings.customer_id` شکست می‌خورد (۵۰۰). پس رکوردهای باشگاهِ همین
+     * حساب — نزد همهٔ آرایشگرها — قبل از حذف، درون همان تراکنش پاک می‌شوند.
+     */
+    return this.usersRepository.manager.transaction(async manager => {
+      await manager.getRepository(ClubCustomer).delete({ customerId: id });
+
+      return manager.getRepository(User).delete(id);
+    });
   }
 }

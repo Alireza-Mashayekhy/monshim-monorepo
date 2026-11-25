@@ -411,6 +411,26 @@ async function dropBookingManualColumns(world: World) {
   }
 }
 
+/**
+ * شبیه‌سازی «مشتری یتیم» با حالت واقعی production: چون در production قید FK
+ * روی `club_customers.customer_id` وجود ندارد، حذفِ hard حساب مشتری رکورد
+ * باشگاه را با `customerId` اشاره‌کننده به ردیف حذف‌شدهٔ `user` باقی می‌گذارد.
+ * (اگر FK وجود داشت، SQLite خودش رکورد باشگاه را cascade می‌کرد.)
+ */
+async function orphanClubMember(world: World) {
+  const runner = world.dataSource.createQueryRunner();
+  await runner.connect();
+  try {
+    await runner.query('PRAGMA foreign_keys = OFF');
+    await runner.query('DELETE FROM "user" WHERE id = ?', [
+      world.ids.customerId,
+    ]);
+    await runner.query('PRAGMA foreign_keys = ON');
+  } finally {
+    await runner.release();
+  }
+}
+
 maybeDescribe(
   'BookingsService.createManualByBarber — real-SQL e2e (SMS plan)',
   () => {
@@ -736,6 +756,133 @@ maybeDescribe(
       expect(bookings).toHaveLength(1);
       expect(subs[0].smsUsed).toBe(2);
       expect(usages).toHaveLength(1);
+
+      await world.cleanup();
+    });
+
+    it('۱۶. مشتری یتیم (حساب مشتری حذف شده — حالت واقعی تیکت ۵۰۰) ← ترمیم خودکار و ثبت نوبت', async () => {
+      const world = await buildWorld();
+      await grantSmsPlan(world, { smsTotal: 100 });
+
+      // بدون ترمیم، INSERT نوبت روی bookings.customer_id با خطای کلید خارجی
+      // شکست می‌خورد (خطای واقعی production: FK_8e21b7ae…).
+      await orphanClubMember(world);
+
+      const result = (await world.service.createManualByBarber(
+        world.ids.barberUserId,
+        baseDto(world, '10:00'),
+      )) as { bookings: Booking[] };
+
+      expect(result.bookings).toHaveLength(1);
+
+      // حساب مشتری از روی اسنپ‌شات رکورد باشگاه بازسازی شده است
+      const userRepo = world.dataSource.getRepository(User);
+      const rebuilt = await userRepo.findOne({
+        where: { phone: '09130000000' },
+      });
+      expect(rebuilt).toBeTruthy();
+
+      const booking = await world.repos.bookingRepo.findOne({
+        where: { id: result.bookings[0].id },
+      });
+      expect(Number(booking!.customerId)).toBe(Number(rebuilt!.id));
+
+      // رکورد باشگاه به حسابِ تازه‌ساخته وصل شده است
+      const member = await world.dataSource
+        .getRepository(ClubCustomer)
+        .findOne({ where: { id: world.ids.clubMemberId } });
+      expect(Number(member!.customerId)).toBe(Number(rebuilt!.id));
+
+      await world.cleanup();
+    });
+
+    it('۱۷. مشتری یتیم + حسابِ تازه‌ثبت‌نام‌کردهٔ هم‌شماره ← نوبت به همان حساب وصل می‌شود و حساب دوباره ساخته نمی‌شود', async () => {
+      const world = await buildWorld();
+      await grantSmsPlan(world, { smsTotal: 100 });
+
+      await orphanClubMember(world);
+
+      const userRepo = world.dataSource.getRepository(User);
+      const reRegistered = (await userRepo.save(
+        userRepo.create({
+          fullName: 'مشتری تازه',
+          phone: '09130000000',
+          password: 'x',
+          roles: ['user'],
+        } as never),
+      )) as unknown as User;
+
+      const result = (await world.service.createManualByBarber(
+        world.ids.barberUserId,
+        baseDto(world, '11:00'),
+      )) as { bookings: Booking[] };
+
+      expect(result.bookings).toHaveLength(1);
+
+      // حساب تکراری برای همین شماره ساخته نشده است
+      const samePhoneUsers = await userRepo.find({
+        where: { phone: '09130000000' },
+      });
+      expect(samePhoneUsers).toHaveLength(1);
+      expect(Number(samePhoneUsers[0].id)).toBe(Number(reRegistered.id));
+
+      const booking = await world.repos.bookingRepo.findOne({
+        where: { id: result.bookings[0].id },
+      });
+      expect(Number(booking!.customerId)).toBe(Number(reRegistered.id));
+
+      await world.cleanup();
+    });
+
+    it('۱۸. مشتری یتیم + رکورد سالمِ تکراری برای همان مشتری ← رکورد یتیم حذف و نوبت روی رکورد سالم ثبت می‌شود', async () => {
+      const world = await buildWorld();
+      await grantSmsPlan(world, { smsTotal: 100 });
+
+      await orphanClubMember(world);
+
+      const userRepo = world.dataSource.getRepository(User);
+      const reRegistered = (await userRepo.save(
+        userRepo.create({
+          fullName: 'مشتری تازه',
+          phone: '09130000000',
+          password: 'x',
+          roles: ['user'],
+        } as never),
+      )) as unknown as User;
+
+      const barber = await world.dataSource
+        .getRepository(BarberProfile)
+        .findOneByOrFail({ userId: world.ids.barberUserId });
+
+      // رکورد دومِ سالم برای همین مشتری (مثل «افزودن دوبارهٔ مشتری پس از
+      // ثبت‌نام مجدد»)؛ رکورد اولِ یتیم هنوز به حسابِ حذف‌شده اشاره می‌کند.
+      const healthy = await world.dataSource.getRepository(ClubCustomer).save(
+        world.dataSource.getRepository(ClubCustomer).create({
+          barberId: barber.id,
+          customerId: reRegistered.id,
+          fullName: 'مشتری تازه',
+          phone: '09130000000',
+          groupId: null,
+        }),
+      );
+
+      const result = (await world.service.createManualByBarber(
+        world.ids.barberUserId,
+        baseDto(world, '12:00'),
+      )) as { bookings: Booking[] };
+
+      expect(result.bookings).toHaveLength(1);
+      expect(Number(result.bookings[0].customerId)).toBe(
+        Number(reRegistered.id),
+      );
+
+      // رکورد یتیم حذف شده و فقط رکورد سالم باقی است
+      const rows = await world.dataSource
+        .getRepository(ClubCustomer)
+        .find({ where: { barberId: barber.id } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(healthy.id);
+      expect(rows[0].id).not.toBe(world.ids.clubMemberId);
 
       await world.cleanup();
     });
