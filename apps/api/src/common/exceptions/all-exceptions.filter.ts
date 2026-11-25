@@ -157,11 +157,22 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
       this.logger.error(
         `database schema is not ready (a required table/column is missing — ` +
           `run the files in apps/api/sql or let the schema guard create them): ${String(exception)}`,
+        exception instanceof Error ? exception.stack : undefined,
       );
     } else if (getDriverError(exception)) {
-      this.logger.error(`database error: ${String(exception)}`);
+      // SQL + stack trace به‌صورت صریح لاگ می‌شود تا خطای ۵۰۰ در production
+      // بدون حدس و از روی لاگ قابل تشخیص باشد (کوئریِ دقیقِ شکست‌خورده).
+      const failedQuery = (exception as { query?: string }).query;
+      this.logger.error(
+        `database error: ${String(exception)}` +
+          (failedQuery ? ` — failed query: ${failedQuery}` : ''),
+        exception instanceof Error ? exception.stack : undefined,
+      );
     } else {
-      this.logger.warn(`request rejected: ${String(exception)}`);
+      this.logger.warn(
+        `request rejected: ${String(exception)}`,
+        exception instanceof Error ? exception.stack : undefined,
+      );
     }
 
     super.catch(mapped, host);

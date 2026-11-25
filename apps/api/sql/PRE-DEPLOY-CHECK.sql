@@ -118,4 +118,10 @@ SELECT 'user_subscriptions.expiry_reminder_sms_sent_at (idempotency پیامک �
        IF(COUNT(*) > 0, 'OK', 'MISSING')
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subscriptions'
-  AND COLUMN_NAME = 'expiry_reminder_sms_sent_at';
+  AND COLUMN_NAME = 'expiry_reminder_sms_sent_at'
+
+UNION ALL
+SELECT 'sms_usages (table — دفتر مصرف پیامک؛ نبودش کسر سهمیهٔ پیامکِ ثبت رزرو دستی را می‌شکند)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sms_usages';
