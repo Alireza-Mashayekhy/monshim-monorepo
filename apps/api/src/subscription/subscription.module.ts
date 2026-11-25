@@ -9,6 +9,7 @@ import { UserSubscription } from './entities/user-subscription.entity';
 import { PublicPageExpiryReminderService } from './public-page-expiry-reminder.service';
 import { SubscriptionController } from './subscription.controller';
 import { SubscriptionService } from './subscription.service';
+import { SubscriptionSchemaService } from './subscription-schema.service';
 import { UserSubscriptionController } from './user-subscription.controller';
 import { UserSubscriptionService } from './user-subscription.service';
 
@@ -23,6 +24,10 @@ import { UserSubscriptionService } from './user-subscription.service';
     SubscriptionService,
     UserSubscriptionService,
     PublicPageExpiryReminderService,
+    // گارد اسکیمای دفتر مصرف پیامک (sms_usages) — در production با
+    // synchronize=false، نبودِ این جدول فقط مسیر «کسر سهمیهٔ پیامکِ ثبت
+    // رزرو دستی» را با 500/503 می‌شکند؛ جزئیات در خود سرویس.
+    SubscriptionSchemaService,
     // برای پاک‌سازی on-demand کش فرانت پس از انقضای اشتراک پروفایل اختصاصی.
     FrontendRevalidationService,
     // توکنِ صریح برای تزریق اختیاری در `BarberService` بدون import مرزی ماژول
