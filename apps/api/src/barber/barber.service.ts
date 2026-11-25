@@ -15,6 +15,7 @@ import {
   isAllowedSlotIntervalMinutes,
   normalizeSlotIntervalMinutes,
 } from 'src/booking/slot-intervals';
+import { ClubCustomer } from 'src/club/entities/club-customer.entity';
 import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { getPagination, QueryDto } from 'src/common/database/query';
 import { Role } from 'src/common/enum/role.enum';
@@ -1926,6 +1927,16 @@ export class BarberService implements OnModuleInit {
     }
 
     this.notifyPublicProfileChanged(id, user.barberProfile.slug);
+
+    /**
+     * این کاربر ممکن است در باشگاه مشتریانِ آرایشگر دیگری هم رکورد داشته
+     * باشد؛ در production قید FK روی `club_customers.customer_id` نیست و
+     * حذفِ حساب، آن رکوردها را یتیم می‌گذارد (نوبتِ دستیِ بعدی روی آن‌ها با
+     * خطای کلید خارجی روی `bookings.customer_id` ۵۰۰ می‌شود). پس قبل از
+     * حذف حساب پاک می‌شوند.
+     */
+    await manager.getRepository(ClubCustomer).delete({ customerId: id });
+
     await this.userRepo.delete(id);
     return { id };
   }

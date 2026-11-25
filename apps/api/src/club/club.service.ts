@@ -395,6 +395,116 @@ export class ClubService {
       throw new NotFoundException('مشتری در باشگاه شما یافت نشد');
     }
 
+    if (member.customer) {
+      return member;
+    }
+
+    /**
+     * «مشتری یتیم»: ردیف `club_customers` به حساب کاربری‌ای اشاره می‌کند که
+     * دیگر وجود ندارد — حساب مشتری به‌صورت hard-delete حذف شده ولی چون در
+     * production (`synchronize=false`) قید FK روی `club_customers.customer_id`
+     * وجود ندارد، رکورد باشگاه یتیم مانده است. اگر همین‌جا رها شود، INSERT
+     * نوبتِ دستی روی `bookings.customer_id` (قید FK_8e21b7ae…) با خطای
+     * کلید خارجی شکست می‌خورد و رزرو دستی ۵۰۰ می‌شود.
+     *
+     * پس همین‌جا — پیش از ساخت نوبت — رکورد را بازسازی می‌کنیم: اول با شمارهٔ
+     * ذخیره‌شده دنبال حسابِ موجود می‌گردیم؛ اگر نبود، حساب جدیدی از روی
+     * اسنپ‌شاتِ نام/شمارهٔ رکورد باشگاه می‌سازیم (همان منطقِ
+     * `findOrCreateUser` هنگام افزودن مشتری).
+     */
+    return this.repairOrphanedMember(barberId, member);
+  }
+
+  /**
+   * بازسازی خودکار رکورد باشگاهِ یتیم (حساب کاربری‌اش حذف شده است).
+   *
+   * ترتیب ترمیم:
+   *  ۱. اگر حسابی با شمارهٔ ذخیره‌شدهٔ رکورد وجود دارد، رکورد به همان حساب
+   *     وصل می‌شود (شماره، کلید هویتیِ سامانه است).
+   *  ۲. نبود، حساب جدیدی از روی اسنپ‌شات رکورد ساخته می‌شود.
+   *  ۳. اگر برای همین آرایشگر رکورد سالم دیگری از این مشتری وجود داشته باشد
+   *     (قید یکتایی `barberId + customerId`)، رکورد یتیم حذف و رکورد سالم
+   *     برگردانده می‌شود تا ثبت نوبت روی حساب واقعی مشتری انجام شود.
+   */
+  private async repairOrphanedMember(
+    barberId: string,
+    member: ClubCustomer,
+  ): Promise<ClubCustomer> {
+    const phone = this.normalizePhone(member.phone);
+
+    let user = phone ? await this.userRepo.findOne({ where: { phone } }) : null;
+
+    if (!user && phone) {
+      const created = this.userRepo.create({
+        phone,
+        fullName: this.normalizeName(member.fullName) || 'مشتری',
+        isActive: true,
+        roles: [Role.User],
+      });
+
+      try {
+        user = await this.userRepo.save(created);
+      } catch {
+        // مسابقهٔ دو ترمیم هم‌زمان روی یک شماره: حسابِ تازه‌ساخته‌شده را پیدا کن
+        user = await this.userRepo.findOne({ where: { phone } });
+      }
+    }
+
+    if (!user) {
+      throw new BadRequestException(
+        'حساب کاربری این مشتری حذف شده و شمارهٔ موبایل معتبری برای بازسازی آن در رکورد باشگاه ثبت نشده است. لطفاً ابتدا شمارهٔ مشتری را ویرایش کنید.',
+      );
+    }
+
+    const duplicate = await this.clubCustomerRepo.findOne({
+      where: { barberId, customerId: user.id },
+    });
+
+    if (duplicate && duplicate.id !== member.id) {
+      // رکورد سالمِ دیگری از همین مشتری برای این آرایشگر هست؛ رکورد یتیم را
+      // حذف می‌کنیم تا قید یکتایی نشکند و نوبت روی حساب واقعی مشتری ثبت شود.
+      await this.clubCustomerRepo.delete(member.id);
+
+      const healthy = await this.clubCustomerRepo.findOne({
+        where: { id: duplicate.id },
+        relations: { customer: true },
+      });
+
+      if (healthy) {
+        return healthy;
+      }
+
+      throw new NotFoundException('مشتری در باشگاه شما یافت نشد');
+    }
+
+    member.customerId = user.id;
+    member.customer = user;
+
+    try {
+      await this.clubCustomerRepo.update(
+        { id: member.id },
+        { customerId: user.id },
+      );
+    } catch {
+      // مسابقهٔ احتمالی: رکورد دیگری همین حالا به همین حساب وصل شده است
+      const winner = await this.clubCustomerRepo.findOne({
+        where: { barberId, customerId: user.id },
+      });
+
+      if (winner && winner.id !== member.id) {
+        await this.clubCustomerRepo.delete(member.id);
+
+        const healthy = await this.clubCustomerRepo.findOne({
+          where: { id: winner.id },
+          relations: { customer: true },
+        });
+
+        if (healthy) {
+          return healthy;
+        }
+      }
+    }
+
     return member;
   }
 
