@@ -107,8 +107,7 @@ export default function Home() {
                     href="/panel/profile?editCity=1"
                     className="inline-flex items-center gap-0.5 text-[10px] text-primary bg-primary-2 px-1.5 py-0.5 rounded-md border border-primary/20 hover:bg-primary/20 transition-colors"
                   >
-                    <MapPin size={10} />
-                    + ثبت شهر
+                    <MapPin size={10} />+ ثبت شهر
                   </Link>
                 ) : null}
               </div>
@@ -125,7 +124,7 @@ export default function Home() {
         >
           {/* Left illustration */}
           <Image
-            src="/home/banner.jpg"
+            src="/home/banner.png"
             alt="مدیریت سالن منشیم"
             width={1000}
             height={400}
@@ -295,7 +294,9 @@ export default function Home() {
             </div>
           ) : barbersError ? (
             <div className="bg-white rounded-2xl border border-border shadow-xs p-5 text-center space-y-3">
-              <p className="text-sm text-gray-700">دریافت آرایشگاه‌ها انجام نشد.</p>
+              <p className="text-sm text-gray-700">
+                دریافت آرایشگاه‌ها انجام نشد.
+              </p>
               <Button variant="outline" onClick={() => void refetchBarbers()}>
                 تلاش دوباره
               </Button>

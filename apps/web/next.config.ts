@@ -168,7 +168,12 @@ const nextConfig: NextConfig = {
       },
       {
         source: '/sw.js',
-        headers: [{ key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' }],
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, must-revalidate',
+          },
+        ],
       },
       {
         source: '/landing/:file*',
@@ -183,7 +188,7 @@ const nextConfig: NextConfig = {
         headers: [{ key: 'Cache-Control', value: LONG_LIVED_STATIC_ASSETS }],
       },
       {
-        source: '/home/banner.jpg',
+        source: '/home/banner.png',
         headers: [{ key: 'Cache-Control', value: LONG_LIVED_STATIC_ASSETS }],
       },
       {
