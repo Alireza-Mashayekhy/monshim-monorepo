@@ -1,12 +1,12 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 
+import { BirthDatePicker } from '@/components/form/birth-date-picker';
 import FormProvider from '@/components/form/form-provider';
-import { PersianDatePicker } from '@/components/form/persian-date-picker';
 import RHFInput from '@/components/form/rhf-input';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,7 +50,6 @@ interface BasicInfoDrawerProps {
 }
 
 export function BasicInfoDrawer({ open, onOpenChange }: BasicInfoDrawerProps) {
-  const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
   const { data: profile } = useMyBarberProfile();
   const updateMutation = useUpdateBarberProfile();
 
@@ -97,7 +96,7 @@ export function BasicInfoDrawer({ open, onOpenChange }: BasicInfoDrawerProps) {
 
   return (
     <Drawer open={open} onOpenChange={handleClose}>
-      <DrawerContent ref={setContentEl}>
+      <DrawerContent>
         <DrawerHeader>
           <DrawerTitle className="text-center">ویرایش اطلاعات فردی</DrawerTitle>
           <DrawerDescription className="text-center text-sm">
@@ -121,10 +120,9 @@ export function BasicInfoDrawer({ open, onOpenChange }: BasicInfoDrawerProps) {
             sanitize={sanitizeNationalCodeInput}
             helperText="کد ملی برای احراز هویت بانکی و تسویه حساب الزامی است"
           />
-          <PersianDatePicker
+          <BirthDatePicker
             name="birthDate"
             label="تاریخ تولد"
-            portalTarget={contentEl}
           />
 
           <Button type="submit" className="w-full" disabled={isLoading}>

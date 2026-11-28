@@ -54,6 +54,7 @@ export class PaymentController {
       req.user.id,
       getRequestOrigin(req),
       dto?.planId,
+      dto?.discountCode,
     );
   }
 

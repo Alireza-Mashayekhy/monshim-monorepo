@@ -59,6 +59,7 @@ import {
   UserSubscription,
   UserSubscriptionStatus,
 } from 'src/subscription/entities/user-subscription.entity';
+import { SubscriptionService } from 'src/subscription/subscription.service';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
 import { User } from 'src/users/entities/user.entity';
 import { DataSource, SelectQueryBuilder, Table } from 'typeorm';
@@ -301,6 +302,7 @@ async function buildWorld() {
   return {
     dataSource,
     service,
+    userSubscriptionService,
     smsStub,
     repos: { subscriptionRepo, smsUsageRepo, bookingRepo, planRepo },
     ids: {
@@ -434,6 +436,126 @@ async function orphanClubMember(world: World) {
 maybeDescribe(
   'BookingsService.createManualByBarber — real-SQL e2e (SMS plan)',
   () => {
+    it('welcome gift is created in a transaction, usable immediately and queues later purchases', async () => {
+      const world = await buildWorld();
+      try {
+        const gift = await world.dataSource.transaction(manager =>
+          world.userSubscriptionService.grantFreeSmsTrial(
+            world.ids.barberUserId,
+            manager,
+          ),
+        );
+        expect(gift.created).toBe(true);
+        expect(gift.subscription).toMatchObject({
+          price: 0,
+          smsTotal: 50,
+          smsUsed: 0,
+          status: UserSubscriptionStatus.ACTIVE,
+        });
+        expect(
+          (
+            await world.userSubscriptionService.getCurrent(
+              world.ids.barberUserId,
+            )
+          )?.id,
+        ).toBe(gift.subscription.id);
+        expect(
+          (
+            await world.userSubscriptionService.grantFreeSmsTrial(
+              world.ids.barberUserId,
+            )
+          ).created,
+        ).toBe(false);
+        const purchase =
+          await world.userSubscriptionService.activateSubscriptionAfterPayment(
+            world.ids.barberUserId,
+            world.ids.smsPlanId,
+          );
+        expect(purchase?.status).toBe(UserSubscriptionStatus.RESERVED);
+        await world.userSubscriptionService.deductSms(
+          world.ids.barberUserId,
+          50,
+        );
+        expect(
+          (
+            await world.userSubscriptionService.getCurrent(
+              world.ids.barberUserId,
+            )
+          )?.id,
+        ).toBe(purchase?.id);
+      } finally {
+        await world.cleanup();
+      }
+    });
+
+    it('real SQL lists exclude the trial from purchase plans but retain it for administration', async () => {
+      const world = await buildWorld();
+      try {
+        await world.userSubscriptionService.grantFreeSmsTrial(
+          world.ids.barberUserId,
+        );
+        const plans = new SubscriptionService(world.repos.planRepo);
+        const subscriptions = new UserSubscriptionService(
+          world.repos.subscriptionRepo,
+          world.repos.planRepo,
+          world.repos.smsUsageRepo,
+          plans,
+        );
+        expect(
+          (await subscriptions.getActivePlans()).map(plan => plan.planKey),
+        ).toEqual(['starter']);
+        expect(
+          (await plans.findActiveSmsPlans()).map(plan => plan.planKey),
+        ).toEqual(['starter']);
+        expect(
+          (await plans.findActive()).map(plan => plan.planKey),
+        ).not.toContain('sms_trial');
+        expect((await plans.findAll()).map(plan => plan.planKey)).toContain(
+          'sms_trial',
+        );
+      } finally {
+        await world.cleanup();
+      }
+    });
+
+    it('rolls back the user, both grants and a lazily created trial plan together', async () => {
+      const world = await buildWorld();
+      try {
+        await expect(
+          world.dataSource.transaction(async manager => {
+            const repo = manager.getRepository(User);
+            const user = (await repo.save(
+              repo.create({
+                fullName: 'جدید',
+                phone: '09121112222',
+                roles: ['barber'],
+              } as never),
+            )) as unknown as User;
+            await world.userSubscriptionService.grantFreePublicPageTrial(
+              user.id,
+              manager,
+            );
+            await world.userSubscriptionService.grantFreeSmsTrial(
+              user.id,
+              manager,
+            );
+            throw new Error('rollback');
+          }),
+        ).rejects.toThrow('rollback');
+        expect(
+          await world.dataSource
+            .getRepository(User)
+            .findOneBy({ phone: '09121112222' }),
+        ).toBeNull();
+        expect(await world.repos.subscriptionRepo.count()).toBe(0);
+        expect(
+          await world.repos.planRepo.findOneBy({ planKey: 'sms_trial' }),
+        ).toBeNull();
+      } finally {
+        await world.cleanup();
+      }
+    });
+
     it('۱. پلن فعال Starter (۱۰۰ پیامک) ← رزرو ثبت، ۲ اعتبار کسر و در دفتر مصرف ثبت می‌شود', async () => {
       const world = await buildWorld();
       await grantSmsPlan(world, { smsTotal: 100, smsUsed: 0 });
@@ -455,6 +577,160 @@ maybeDescribe(
       expect(usages[0].count).toBe(2);
       expect(world.smsStub.calls).toHaveLength(1);
 
+      await world.cleanup();
+    });
+
+    it('purchase leaves current active, reserves multiple plans and splits booking debit across the FIFO queue', async () => {
+      const world = await buildWorld();
+      const first = await grantSmsPlan(world, {
+        smsTotal: 2,
+        smsUsed: 1,
+        startOffsetDays: -1,
+      });
+      const next =
+        await world.userSubscriptionService.activateSubscriptionAfterPayment(
+          world.ids.barberUserId,
+          world.ids.smsPlanId,
+        );
+      const last =
+        await world.userSubscriptionService.activateSubscriptionAfterPayment(
+          world.ids.barberUserId,
+          world.ids.smsPlanId,
+        );
+      expect(next?.status).toBe(UserSubscriptionStatus.RESERVED);
+      expect(last?.status).toBe(UserSubscriptionStatus.RESERVED);
+      expect(
+        (await world.repos.subscriptionRepo.findOneByOrFail({ id: first.id }))
+          .status,
+      ).toBe(UserSubscriptionStatus.ACTIVE);
+      // sqlite timestamps have second precision: establish a deterministic FIFO order.
+      await world.repos.subscriptionRepo.update(next!.id, {
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      await world.repos.subscriptionRepo.update(last!.id, {
+        createdAt: new Date('2026-01-02T00:00:00Z'),
+      });
+      await world.service.createManualByBarber(
+        world.ids.barberUserId,
+        baseDto(world, '10:00'),
+      );
+      const firstAfter = await world.repos.subscriptionRepo.findOneByOrFail({
+        id: first.id,
+      });
+      const nextAfter = await world.repos.subscriptionRepo.findOneByOrFail({
+        id: next!.id,
+      });
+      const lastAfter = await world.repos.subscriptionRepo.findOneByOrFail({
+        id: last!.id,
+      });
+      expect(firstAfter).toMatchObject({
+        status: UserSubscriptionStatus.EXPIRED,
+        smsUsed: 2,
+      });
+      expect(nextAfter).toMatchObject({
+        status: UserSubscriptionStatus.ACTIVE,
+        smsUsed: 1,
+        smsTotal: 100,
+      });
+      expect(lastAfter.status).toBe(UserSubscriptionStatus.RESERVED);
+      expect(nextAfter.endDate.getTime() - nextAfter.startDate.getTime()).toBe(
+        30 * 86400000,
+      );
+      const usage = await world.repos.smsUsageRepo.find();
+      expect(usage).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ userSubscriptionId: first.id, count: 1 }),
+          expect.objectContaining({ userSubscriptionId: next!.id, count: 1 }),
+        ]),
+      );
+      await world.cleanup();
+    });
+
+    it('late on-demand expiry gives the reserved plan a full new duration and list returns it active', async () => {
+      const world = await buildWorld();
+      const first = await grantSmsPlan(world, { startOffsetDays: -3 });
+      const next =
+        await world.userSubscriptionService.activateSubscriptionAfterPayment(
+          world.ids.barberUserId,
+          world.ids.smsPlanId,
+        );
+      await world.repos.subscriptionRepo.update(first.id, {
+        endDate: new Date(Date.now() - 86_400_000),
+      });
+      const before = Date.now();
+      const list = await world.userSubscriptionService.findAll(
+        world.ids.barberUserId,
+      );
+      const promoted = list.find(item => item.id === next!.id)!;
+      expect(promoted.status).toBe(UserSubscriptionStatus.ACTIVE);
+      // MySQL DATETIME precision is seconds; allow that truncation here too.
+      expect(promoted.startDate.getTime()).toBeGreaterThanOrEqual(
+        before - 1000,
+      );
+      expect(promoted.endDate.getTime() - promoted.startDate.getTime()).toBe(
+        30 * 86400000,
+      );
+      expect(list.find(item => item.id === first.id)?.status).toBe(
+        UserSubscriptionStatus.EXPIRED,
+      );
+      await world.cleanup();
+    });
+
+    it('cron expires exhausted SMS subscriptions and promotes the queue', async () => {
+      const world = await buildWorld();
+      const first = await grantSmsPlan(world, {
+        smsTotal: 2,
+        smsUsed: 1,
+        startOffsetDays: -1,
+      });
+      const next =
+        await world.userSubscriptionService.activateSubscriptionAfterPayment(
+          world.ids.barberUserId,
+          world.ids.smsPlanId,
+        );
+      await world.repos.subscriptionRepo.update(first.id, { smsUsed: 2 });
+      expect(
+        await world.userSubscriptionService.expireOverdueSubscriptions(),
+      ).toBe(1);
+      expect(
+        await world.repos.subscriptionRepo.findOneByOrFail({ id: first.id }),
+      ).toMatchObject({ status: UserSubscriptionStatus.EXPIRED });
+      expect(
+        await world.repos.subscriptionRepo.findOneByOrFail({ id: next!.id }),
+      ).toMatchObject({ status: UserSubscriptionStatus.ACTIVE });
+      await world.cleanup();
+    });
+
+    it('rolls back all cross-plan debits and promotion with its enclosing transaction', async () => {
+      const world = await buildWorld();
+      const first = await grantSmsPlan(world, {
+        smsTotal: 2,
+        smsUsed: 1,
+        startOffsetDays: -1,
+      });
+      const next =
+        await world.userSubscriptionService.activateSubscriptionAfterPayment(
+          world.ids.barberUserId,
+          world.ids.smsPlanId,
+        );
+      await expect(
+        world.dataSource.transaction(async manager => {
+          await world.userSubscriptionService.deductSms(
+            world.ids.barberUserId,
+            2,
+            'rollback',
+            manager,
+          );
+          throw new Error('rollback');
+        }),
+      ).rejects.toThrow('rollback');
+      expect(
+        await world.repos.subscriptionRepo.findOneByOrFail({ id: first.id }),
+      ).toMatchObject({ status: UserSubscriptionStatus.ACTIVE, smsUsed: 1 });
+      expect(
+        await world.repos.subscriptionRepo.findOneByOrFail({ id: next!.id }),
+      ).toMatchObject({ status: UserSubscriptionStatus.RESERVED, smsUsed: 0 });
+      expect(await world.repos.smsUsageRepo.count()).toBe(0);
       await world.cleanup();
     });
 
@@ -480,12 +756,10 @@ maybeDescribe(
       const subs = await world.repos.subscriptionRepo.find({
         relations: { subscriptionPlan: true },
       });
-      const activeSms = subs.find(
-        item =>
-          item.status === UserSubscriptionStatus.ACTIVE &&
-          item.subscriptionPlan?.planType === SMS_PLAN_TYPE,
+      const exhausted = subs.find(
+        item => item.smsTotal === 2 && item.smsUsed === 2,
       );
-      expect(activeSms!.smsUsed).toBe(2); // فقط همان ۲ قبلی، هیچ کسر جدیدی
+      expect(exhausted?.status).toBe(UserSubscriptionStatus.EXPIRED); // هیچ کسر جدیدی انجام نشد
 
       await world.cleanup();
     });

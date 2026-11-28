@@ -21,8 +21,8 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
 
+import { BirthDatePicker } from '@/components/form/birth-date-picker';
 import FormProvider from '@/components/form/form-provider';
-import { PersianDatePickerLazy } from '@/components/form/persian-date-picker-lazy';
 import RHFInput from '@/components/form/rhf-input';
 import RHFPhoneInput from '@/components/form/rhf-phone-input';
 import RHFSelect from '@/components/form/rhf-select';
@@ -372,17 +372,11 @@ function RegisterFormContent({
 
           {/* Birth Date */}
           <div className="space-y-1">
-            {/*
-              `portal`: تقویم در `document.body` رندر می‌شود؛ قالب این صفحه
-              `overflow-x-hidden` دارد و روی نمایشگرهای باریک، تقویمِ
-              absolute داخل کارت بریده می‌شد و کاربر فکر می‌کرد باز نمی‌شود.
-            */}
-            <PersianDatePickerLazy
+            <BirthDatePicker
               name="birthDate"
               label="تاریخ تولد"
               placeholder="انتخاب تاریخ تولد (روز / ماه / سال)"
               required
-              portal
             />
           </div>
 

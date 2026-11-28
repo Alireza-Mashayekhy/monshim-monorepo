@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, MoreThan, Not, Repository } from 'typeorm';
 
 import {
   PUBLIC_PAGE_PLAN_TYPE,
   PUBLIC_PAGE_PURCHASE_PLAN_KEYS,
   SMS_PLAN_TYPE,
+  SMS_PURCHASE_PLAN_KEYS,
+  SMS_TRIAL_PLAN_KEY,
   SUBSCRIPTION_PLANS,
 } from './constants';
 import { UpdateSubscriptionPlanDto } from './dto/update-subscription.dto';
@@ -84,9 +86,10 @@ export class SubscriptionService implements OnModuleInit {
 
   async findActive() {
     return this.subscriptionPlanRepo.find({
-      where: {
-        isActive: true,
-      },
+      where: [
+        { isActive: true, planKey: Not(SMS_TRIAL_PLAN_KEY) },
+        { isActive: true, planKey: IsNull() },
+      ],
       order: {
         sortOrder: 'ASC',
         price: 'ASC',
@@ -103,6 +106,8 @@ export class SubscriptionService implements OnModuleInit {
       where: {
         isActive: true,
         planType: SMS_PLAN_TYPE,
+        planKey: In([...SMS_PURCHASE_PLAN_KEYS]),
+        price: MoreThan(0),
       },
       order: {
         sortOrder: 'ASC',

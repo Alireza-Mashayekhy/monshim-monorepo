@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
+import { subscriptionKeys } from '@/services/features/subscription/hooks';
+
 import {
   getDepositInvoice,
   getPaymentStatus,
@@ -15,10 +17,19 @@ import {
 } from './types';
 
 export const usePaySubscription = () => {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (dto: InitiateSubscriptionPaymentDto) => paySubscription(dto),
     onSuccess: response => {
-      const paymentUrl = response.data?.paymentUrl;
+      const result = response.data;
+      // پرداخت رایگان (مثلاً کد تخفیف ۱۰۰٪): بدون انتقال به درگاه همین‌جا
+      // تمام می‌شود؛ فقط وضعیت اشتراک‌ها تازه می‌شود.
+      if (result?.free) {
+        toast.success('اشتراک با موفقیت خریداری شد');
+        void queryClient.invalidateQueries({ queryKey: subscriptionKeys.all });
+        return;
+      }
+      const paymentUrl = result?.paymentUrl;
       if (paymentUrl) {
         toast.info('در حال انتقال به درگاه پرداخت زیبال...');
         window.location.href = paymentUrl;
@@ -36,7 +47,8 @@ export const usePaySubscription = () => {
 export const usePayPublicPage = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (options: { planId: string }) => payPublicPage(options),
+    mutationFn: (options: { planId: string; discountCode?: string }) =>
+      payPublicPage(options),
     onSuccess: response => {
       const result = response.data;
       const paymentUrl = result?.paymentUrl;

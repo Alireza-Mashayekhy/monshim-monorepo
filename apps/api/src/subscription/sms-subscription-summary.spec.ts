@@ -75,6 +75,29 @@ describe('summarizeSmsSubscriptions', () => {
     });
   });
 
+  it('identifies the welcome trial independently of price', () => {
+    const trial = summarizeSmsSubscriptions(
+      [
+        makeSubscription({
+          smsTotal: 50,
+          price: 0,
+          subscriptionPlan: { ...SMS_PLAN, planKey: 'sms_trial' } as any,
+        }),
+      ],
+      NOW,
+    );
+    const paid = summarizeSmsSubscriptions(
+      [makeSubscription({ price: 0, subscriptionPlan: SMS_PLAN as any })],
+      NOW,
+    );
+    expect(trial).toMatchObject({
+      isFreeTrial: true,
+      smsTotal: 50,
+      smsRemaining: 50,
+    });
+    expect(paid?.isFreeTrial).toBe(false);
+  });
+
   it('scenario 2: active subscription with partial usage computes remaining and percent', () => {
     const summary = summarizeSmsSubscriptions(
       [makeSubscription({ smsUsed: 30, subscriptionPlan: SMS_PLAN as any })],
@@ -90,16 +113,39 @@ describe('summarizeSmsSubscriptions', () => {
     });
   });
 
-  it('scenario 3: fully consumed quota shows 100% and zero remaining', () => {
+  it('scenario 3: fully consumed quota is expired with zero remaining', () => {
     const summary = summarizeSmsSubscriptions(
       [makeSubscription({ smsUsed: 100, subscriptionPlan: SMS_PLAN as any })],
       NOW,
     );
 
     expect(summary).toMatchObject({
-      display: 'active',
+      display: 'expired',
       smsRemaining: 0,
       usagePercent: 100,
+    });
+  });
+
+  it('reports the active plan and the reserved queue without selecting a reserved placeholder as active', () => {
+    const current = makeSubscription({
+      id: 'current',
+      smsUsed: 5,
+      subscriptionPlan: SMS_PLAN as any,
+    });
+    const reserved = makeSubscription({
+      id: 'reserved',
+      status: UserSubscriptionStatus.RESERVED,
+      subscriptionPlan: SMS_PLAN as any,
+    });
+    expect(summarizeSmsSubscriptions([reserved, current], NOW)).toMatchObject({
+      id: 'current',
+      display: 'active',
+      reservedCount: 1,
+    });
+    expect(summarizeSmsSubscriptions([reserved], NOW)).toMatchObject({
+      id: 'reserved',
+      display: 'reserved',
+      reservedCount: 1,
     });
   });
 

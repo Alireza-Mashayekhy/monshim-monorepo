@@ -80,7 +80,7 @@ export function AdminTicketList({
             className={cn(
               'w-full text-right rounded-lg border p-3 transition-colors',
               selectedId === ticket.id
-                ? 'border-primary bg-primary-50/60'
+                ? 'border-primary bg-primary-2/60'
                 : 'border-gray-200 bg-white hover:border-primary/40',
             )}
           >
@@ -89,7 +89,7 @@ export function AdminTicketList({
                 {ticket.subject}
               </span>
               {unread > 0 && (
-                <span className="shrink-0 min-w-5 h-5 px-1.5 rounded-full bg-primary-600 text-white text-[10px] font-bold flex items-center justify-center">
+                <span className="shrink-0 min-w-5 h-5 px-1.5 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center">
                   {unread > 99 ? '۹۹+' : unread}
                 </span>
               )}

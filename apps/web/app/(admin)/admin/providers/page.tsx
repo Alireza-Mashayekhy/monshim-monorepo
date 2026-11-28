@@ -3,6 +3,7 @@
 import { KeyRound, Pause, Play, Search, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
+import { PublicPageSetup } from '@/components/admin/providers/public-page-setup';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import CustomPagination from '@/components/shared/custom-pagination';
 import { Button } from '@/components/ui/button';
@@ -51,6 +52,7 @@ const SMS_STATUS_BADGES: Record<
     label: 'در انتظار شروع',
     className: 'bg-sky-50 text-sky-700',
   },
+  reserved: { label: 'رزروشده', className: 'bg-sky-50 text-sky-700' },
   expired: {
     label: 'منقضی',
     className: 'bg-amber-50 text-amber-800',
@@ -94,12 +96,18 @@ function renderSmsSubscription(subscription: SmsSubscriptionStatus | null) {
         <span className="text-xs font-semibold text-gray-900">
           {subscription.planName || '—'}
         </span>
+        {subscription.isFreeTrial && (
+          <span className="text-xs font-semibold text-primary">
+            دورهٔ رایگان ({toPersianDigits(subscription.smsTotal)} پیامک)
+          </span>
+        )}
       </div>
 
-      <span className="text-xs text-muted-foreground" dir="rtl">
+      {subscription.display !== 'reserved' && <span className="text-xs text-muted-foreground" dir="rtl">
         از {formatFaDate(subscription.startDate)} تا{' '}
         {formatFaDate(subscription.endDate)}
-      </span>
+      </span>}
+      {subscription.reservedCount > 0 && <span className="text-xs text-sky-700">{toPersianDigits(subscription.reservedCount)} اشتراک رزروشده در صف</span>}
 
       <span className="text-xs text-muted-foreground">
         مبلغ: {toPersianDigits(formatPrice(subscription.price))} تومان
@@ -243,7 +251,7 @@ export default function AdminBarbersPage() {
 
   const dialogDescription = action
     ? action.type === 'delete'
-      ? `آیا از حذف دائمی «${action.barber.fullName || action.barber.salonName}» مطمئن هستید؟ اگر سابقهٔ رزرو، پرداخت یا تراکنش داشته باشد، برای حفظ سوابق امکان حذف وجود ندارد و باید نمایش آن را غیرفعال کنید.`
+      ? `حساب «${action.barber.fullName || 'نام نامشخص'}»، سالن «${action.barber.salonName || 'بدون نام'}» با شمارهٔ ${action.barber.phone || 'نامشخص'} حذف می‌شود. این عملیات غیرقابل بازگشت است. در نسخهٔ فعلی، در صورت وجود سابقهٔ رزرو، پرداخت یا تراکنش، حذف امکان‌پذیر نیست و می‌توانید نمایش را غیرفعال کنید.`
       : action.type === 'restore-account'
         ? `فقط پس از بررسی علت غیرفعال‌شدن حساب «${action.barber.fullName || action.barber.salonName}»، ورود همهٔ نقش‌های این حساب و نشست‌های معتبر قبلی دوباره مجاز می‌شود${action.barber.isAdminAccount ? '؛ این حساب نقش مدیر نیز دارد' : ''}. سالن همچنان پنهان می‌ماند و نمایش آن جداگانه فعال می‌شود.`
         : action.type === 'deactivate'
@@ -272,7 +280,7 @@ export default function AdminBarbersPage() {
               setSearch(event.target.value);
               setPage(1);
             }}
-            placeholder="جست‌وجوی نام، سالن یا شماره"
+            placeholder="جست‌وجوی نام، سالن، شماره یا اسلاگ"
             className="bg-white pr-9"
             aria-label="جست‌وجوی آرایشگرها"
           />
@@ -370,7 +378,14 @@ export default function AdminBarbersPage() {
                     {renderSmsSubscription(barber.smsSubscription ?? null)}
                   </TableCell>
                   <TableCell>
-                    {renderPublicPageSubscription(barber.publicPageSubscription)}
+                    {barber.publicPageSubscriptionKnown === false ? (
+                      <span className="text-xs text-amber-800">
+                        وضعیت اشتراک نامشخص است
+                      </span>
+                    ) : (
+                      renderPublicPageSubscription(barber.publicPageSubscription)
+                    )}
+                    <PublicPageSetup barber={barber} />
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-2">

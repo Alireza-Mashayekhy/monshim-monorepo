@@ -13,6 +13,10 @@ import { useMemo, useState, useSyncExternalStore } from 'react';
 
 import DashboardShell from '@/components/dashboard/layout/dashboard-shell';
 import AppCard from '@/components/shared/app-card';
+import {
+  AppliedDiscount,
+  DiscountCodeBox,
+} from '@/components/shared/discount-code-box';
 import FadeIn from '@/components/shared/fade-in';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,6 +25,7 @@ import {
   SUBSCRIPTION_PLAN_DISPLAY,
   SUBSCRIPTION_PLAN_ICONS,
 } from '@/constants/subscription-plans';
+import { isSmsSubscriptionUsable } from '@/lib/subscription';
 import {
   cn,
   formatPrice,
@@ -71,6 +76,13 @@ function useNow() {
 
 export default function SubscriptionPage() {
   const [selectedDuration, setSelectedDuration] = useState<number>(30);
+  /**
+   * کد تخفیف اعمال‌شده (target=SUBSCRIPTION). استعلام برای **همهٔ** پلن‌ها
+   * (همهٔ مدت‌ها) انجام می‌شود تا با تعویض تب مدت، قیمت نهایی از قبل
+   * موجود باشد؛ پرداخت هم `discountCode` را همراه شناسه پلن می‌فرستد.
+   */
+  const [appliedDiscount, setAppliedDiscount] =
+    useState<AppliedDiscount | null>(null);
 
   const { data: plans, isLoading: plansLoading } = useActiveSubscriptionPlans();
 
@@ -81,17 +93,30 @@ export default function SubscriptionPage() {
     refetch: refetchSubscription,
   } = useCurrentUserSubscription();
 
-  // سابقهٔ اشتراک‌ها فقط وقتی خوانده می‌شود که اشتراک فعالی یافت نشده است؛
-  // از آنجا وضعیت واقعی آخرین اشتراک (منقضی/لغوشده) از پاسخ بک‌اند نشان
-  // داده می‌شود، نه از حدس فرانت‌اند.
-  const { data: historyData } = useUserSubscriptions({
-    enabled:
-      !currentLoading && !currentError && !currentSubscription?.data,
-  });
-
+  const {
+    data: historyData,
+    isError: historyError,
+    refetch: refetchHistory,
+  } = useUserSubscriptions();
   const paySubscriptionMutation = usePaySubscription();
-
-  const currentPlan = currentSubscription?.data?.subscriptionPlan ?? null;
+  const now = useNow() * MINUTE_MS;
+  const activeSubscription = isSmsSubscriptionUsable(
+    currentSubscription?.data,
+    now,
+  )
+    ? currentSubscription!.data
+    : null;
+  const currentPlan = activeSubscription?.subscriptionPlan ?? null;
+  const smsHistory = (historyData?.data ?? []).filter(
+    row =>
+      !row.subscriptionPlan?.planType ||
+      row.subscriptionPlan.planType === 'sms',
+  );
+  // API history is newest first; reversing preserves DB microsecond ordering
+  // even when JavaScript serialization rounds two creation times to the same ms.
+  const reservedSubscriptions = smsHistory
+    .filter(row => row.status === 'reserved')
+    .reverse();
 
   const displayPlans = useMemo(() => {
     const list = plans?.data ?? [];
@@ -127,21 +152,21 @@ export default function SubscriptionPage() {
     [displayPlans, activeDuration],
   );
 
-  const smsTotal = currentSubscription?.data?.smsTotal ?? 0;
-  const smsUsed = currentSubscription?.data?.smsUsed ?? 0;
+  const smsTotal = activeSubscription?.smsTotal ?? 0;
+  const smsUsed = activeSubscription?.smsUsed ?? 0;
   const smsRemaining = Math.max(0, smsTotal - smsUsed);
   const smsUsedPercent =
     smsTotal > 0 ? Math.min(100, Math.round((smsUsed / smsTotal) * 100)) : 0;
 
-  const now = useNow() * MINUTE_MS;
-
   /**
    * آخرین اشتراک کاربر (جدیدترین بر اساس createdAt) برای نمایش وضعیت
    * منقضی/لغوشده/در انتظارِ شروع وقتی اشتراک فعالی وجود ندارد. وضعیت
-   * نمایشی فقط از status واقعی بک‌اند و تاریخ‌های سرور مشتق می‌شود؛ هیچ
-   * تشخیص «فعال بودن» در فرانت انجام نمی‌شود و داده از API واقعی می‌آید.
+   * وضعیت کش‌شده در فرانت هم از نظر زمان و سهمیه بررسی می‌شود تا تاخیر
+   * درخواست بعدی باعث نمایش اشتراک تمام‌شده به عنوان فعال نشود.
    */
-  const latestSubscription = historyData?.data?.[0] ?? null;
+  const latestSubscription =
+    smsHistory.find(row => row.status !== 'reserved') ??
+    (!activeSubscription ? (currentSubscription?.data ?? null) : null);
   const latestScheduledStart =
     latestSubscription?.status === 'active' &&
     latestSubscription.startDate &&
@@ -152,20 +177,28 @@ export default function SubscriptionPage() {
     const ended =
       latestSubscription.endDate &&
       new Date(latestSubscription.endDate).getTime() <= now;
-    if (latestSubscription.status === 'expired' || ended) return 'منقضی‌شده';
+    if (
+      latestSubscription.status === 'expired' ||
+      ended ||
+      (Number(latestSubscription.smsTotal) > 0 &&
+        Number(latestSubscription.smsUsed) >=
+          Number(latestSubscription.smsTotal))
+    )
+      return 'منقضی‌شده';
     return null;
   })();
 
-  const daysLeft = currentSubscription?.data?.endDate
-    ? Math.ceil(
-        (new Date(currentSubscription.data.endDate).getTime() - now) / DAY_MS,
-      )
+  const daysLeft = activeSubscription?.endDate
+    ? Math.ceil((new Date(activeSubscription.endDate).getTime() - now) / DAY_MS)
     : null;
 
   const handleUpgrade = (planId: string) => {
     if (paySubscriptionMutation.isPending) return;
 
-    paySubscriptionMutation.mutate({ subscriptionPlanId: planId });
+    paySubscriptionMutation.mutate({
+      subscriptionPlanId: planId,
+      discountCode: appliedDiscount?.code,
+    });
   };
 
   if (plansLoading || currentLoading) {
@@ -183,7 +216,7 @@ export default function SubscriptionPage() {
       {/* اشتراک فعلی */}
       <FadeIn delay={0.08}>
         <AppCard className="p-4 sm:p-5">
-          {currentSubscription?.data ? (
+          {activeSubscription ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
@@ -199,6 +232,11 @@ export default function SubscriptionPage() {
                     <p className="text-[11px] text-gray-400 font-medium mt-0.5">
                       اشتراک {getDurationLabel(currentPlan?.durationDays ?? 30)}
                     </p>
+                    {(activeSubscription.isFreeTrial ?? currentPlan?.planKey === 'sms_trial') && (
+                      <p className="mt-1 text-xs font-semibold text-primary">
+                        دورهٔ رایگان ({toPersianDigits(activeSubscription.smsTotal)} پیامک)
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -247,9 +285,7 @@ export default function SubscriptionPage() {
               <div className="mt-3.5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs font-medium">
                 <div className="flex items-center gap-1.5 text-gray-500">
                   <CalendarDays size={14} className="text-primary/70" />
-                  <span>
-                    شروع: {formatDate(currentSubscription.data.startDate)}
-                  </span>
+                  <span>شروع: {formatDate(activeSubscription.startDate)}</span>
                 </div>
 
                 <div
@@ -262,7 +298,7 @@ export default function SubscriptionPage() {
                 >
                   <Clock size={14} />
                   <span>
-                    انقضا: {formatDate(currentSubscription.data.endDate)}
+                    انقضا: {formatDate(activeSubscription.endDate)}
                     {daysLeft !== null && daysLeft >= 0 && daysLeft <= 7
                       ? ` (${toPersianDigits(daysLeft)} روز باقی‌مانده)`
                       : ''}{' '}
@@ -309,8 +345,8 @@ export default function SubscriptionPage() {
                 تاریخ{' '}
                 {latestSubscription?.startDate
                   ? formatDate(latestSubscription.startDate)
-                  : '—'}
-                {' '}به‌صورت خودکار فعال می‌شود.
+                  : '—'}{' '}
+                به‌صورت خودکار فعال می‌شود.
               </p>
             </div>
           ) : latestInactiveLabel ? (
@@ -320,17 +356,19 @@ export default function SubscriptionPage() {
               </div>
 
               <h2 className="text-sm font-black text-gray-900">
-                اشتراک شما {latestInactiveLabel} است
+                {latestInactiveLabel === 'منقضی‌شده' &&
+                latestSubscription &&
+                Number(latestSubscription.smsTotal) > 0 &&
+                Number(latestSubscription.smsUsed) >=
+                  Number(latestSubscription.smsTotal)
+                  ? 'اشتراک شما به دلیل اتمام پیامک منقضی شده است'
+                  : `اشتراک شما ${latestInactiveLabel} است`}
               </h2>
 
               <p className="text-xs text-gray-400">
-                پلن «{latestSubscription?.subscriptionPlan?.name ?? '—'}» با
-                تاریخ پایان{' '}
-                {latestSubscription?.endDate
-                  ? formatDate(latestSubscription.endDate)
-                  : '—'}
-                {' '}به پایان رسیده است. برای ادامهٔ امکانات پیامکی، یکی از
-                پلن‌های زیر را خریداری کنید.
+                پلن «{latestSubscription?.subscriptionPlan?.name ?? '—'}» دیگر
+                قابل استفاده نیست. برای ادامهٔ امکانات پیامکی، یکی از پلن‌های
+                زیر را خریداری کنید.
               </p>
             </div>
           ) : (
@@ -351,6 +389,52 @@ export default function SubscriptionPage() {
           )}
         </AppCard>
       </FadeIn>
+
+      {historyError && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          دریافت صف اشتراک‌ها ناموفق بود.{' '}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => void refetchHistory()}
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      )}
+      {reservedSubscriptions.length > 0 && (
+        <section
+          className="rounded-2xl border border-primary-2 bg-primary-3 p-4 sm:p-5"
+          aria-label="اشتراک‌های رزروشده"
+        >
+          <h2 className="text-sm font-black text-gray-900">
+            اشتراک رزروشده (در انتظار فعال‌سازی)
+          </h2>
+          <p className="mt-2 text-xs leading-6 text-gray-600">
+            تایمر این اشتراک هنوز شروع نشده است؛ به محض اتمام زمان یا تمام شدن
+            پیامک‌های اشتراک فعلی شما، به‌صورت خودکار فعال می‌شود. اشتراک‌های
+            بعدی صف به‌ترتیب و پس از پایان اشتراک پیش از خود فعال می‌شوند.
+          </p>
+          <ol className="mt-3 space-y-2">
+            {reservedSubscriptions.map((subscription, index) => (
+              <li
+                key={subscription.id}
+                className="rounded-xl border border-primary-2 bg-white p-3 text-sm text-gray-800"
+              >
+                <span className="font-bold">
+                  {toPersianDigits(index + 1)}.{' '}
+                  {subscription.subscriptionPlan?.name ?? 'پلن پیامکی'}
+                </span>
+                <span className="text-gray-600">
+                  {' '}
+                  · {toPersianDigits(subscription.smsTotal)} پیامک ·{' '}
+                  {toPersianDigits(subscription.subscriptionPlan?.durationDays ?? 30)} روزه
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
 
       <FadeIn delay={0.16}>
         <div className="mb-3 flex items-end justify-between gap-2">
@@ -386,6 +470,16 @@ export default function SubscriptionPage() {
           </div>
         )}
 
+        {/* باکس کد تخفیف اشتراک پیامکی — بالای لیست پلن‌ها */}
+        <div className="mb-4">
+          <DiscountCodeBox
+            target="SUBSCRIPTION"
+            plans={plans?.data ?? []}
+            applied={appliedDiscount}
+            onAppliedChange={setAppliedDiscount}
+          />
+        </div>
+
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-3 lg:gap-4">
           {filteredDisplayPlans.map(({ plan, display, icon: Icon }, index) => {
             const isCurrent = currentPlan?.id === plan.id;
@@ -393,6 +487,7 @@ export default function SubscriptionPage() {
             const planName = display?.name ?? plan.name;
             const bookingsLabel = display?.bookingsLabel;
             const description = display?.description ?? plan.description;
+            const quote = appliedDiscount?.quotes[plan.id];
 
             return (
               <FadeIn key={plan.id} delay={0.2 + index * 0.06}>
@@ -457,9 +552,16 @@ export default function SubscriptionPage() {
 
                   <div className="mt-auto pt-5">
                     <div className="mb-4 flex items-end justify-between rounded-2xl bg-primary-3 border border-primary-2 px-4 py-3">
-                      <div className="flex items-baseline gap-1">
+                      <div className="flex items-baseline gap-1.5">
+                        {quote && (
+                          <span className="text-sm font-bold text-gray-400 line-through">
+                            {toPersianDigits(formatPrice(quote.originalAmount))}
+                          </span>
+                        )}
                         <span className="text-xl font-black text-primary">
-                          {toPersianDigits(formatPrice(plan.price))}
+                          {toPersianDigits(
+                            formatPrice(quote ? quote.amount : plan.price),
+                          )}
                         </span>
 
                         <span className="text-[11px] font-bold text-gray-400">
@@ -467,14 +569,21 @@ export default function SubscriptionPage() {
                         </span>
                       </div>
 
-                      <span className="text-[11px] font-bold text-gray-400">
-                        / {getDurationLabel(plan.durationDays)}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {quote && (
+                          <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-black text-white">
+                            {toPersianDigits(quote.percentOff)}٪ تخفیف
+                          </span>
+                        )}
+                        <span className="text-[11px] font-bold text-gray-400">
+                          / {getDurationLabel(plan.durationDays)}
+                        </span>
+                      </div>
                     </div>
                     <Button
                       className="w-full"
                       variant={isRecommended ? 'default' : 'outline'}
-                      disabled={isCurrent || paySubscriptionMutation.isPending}
+                      disabled={paySubscriptionMutation.isPending}
                       onClick={() => handleUpgrade(plan.id)}
                     >
                       {paySubscriptionMutation.isPending ? (
@@ -482,8 +591,12 @@ export default function SubscriptionPage() {
                           <Loader2 className="ml-1.5 size-4 animate-spin" />
                           در حال انتقال به درگاه...
                         </>
-                      ) : isCurrent ? (
-                        'پلن فعلی شما'
+                      ) : activeSubscription ? (
+                        isCurrent ? (
+                          'تمدید / رزرو مجدد'
+                        ) : (
+                          'خرید و رزرو در صف'
+                        )
                       ) : (
                         'خرید و پرداخت آنلاین'
                       )}

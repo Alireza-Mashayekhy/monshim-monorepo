@@ -12,8 +12,22 @@
 -- اگر هیچ ردیف MISSING نبود، deploy امن است.
 -- ============================================================================
 
-SELECT 'barber_profile.is_publicly_visible (الزامی — نبودش سرویس را بالا نمی‌آورد)' AS requirement,
+SELECT 'public_page_discounts.starts_at (اجرای migration پیش از deploy)' AS requirement,
        IF(COUNT(*) > 0, 'OK', 'MISSING') AS status
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'public_page_discounts'
+  AND COLUMN_NAME = 'starts_at'
+
+UNION ALL
+SELECT 'user_subscriptions.status reserved (اجرای migration پیش از deploy)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subscriptions'
+  AND COLUMN_NAME = 'status' AND COLUMN_TYPE LIKE '%''reserved''%'
+
+UNION ALL
+SELECT 'barber_profile.is_publicly_visible (الزامی — نبودش سرویس را بالا نمی‌آورد)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
   AND COLUMN_NAME = 'is_publicly_visible'
@@ -38,6 +52,48 @@ SELECT 'barber_profile.pending_rejection_reason',
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
   AND COLUMN_NAME = 'pending_rejection_reason'
+
+UNION ALL
+SELECT 'barber_profile.contact_phone (راه‌های ارتباطی/مسیریابی)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
+  AND COLUMN_NAME = 'contact_phone'
+
+UNION ALL
+SELECT 'barber_profile.instagram (راه‌های ارتباطی/مسیریابی)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
+  AND COLUMN_NAME = 'instagram'
+
+UNION ALL
+SELECT 'barber_profile.whatsapp (راه‌های ارتباطی/مسیریابی)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
+  AND COLUMN_NAME = 'whatsapp'
+
+UNION ALL
+SELECT 'barber_profile.telegram (راه‌های ارتباطی/مسیریابی)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
+  AND COLUMN_NAME = 'telegram'
+
+UNION ALL
+SELECT 'barber_profile.latitude (موقعیت مکانی برای گوگل‌مپ/اسنپ)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
+  AND COLUMN_NAME = 'latitude'
+
+UNION ALL
+SELECT 'barber_profile.longitude (موقعیت مکانی برای گوگل‌مپ/اسنپ)',
+       IF(COUNT(*) > 0, 'OK', 'MISSING')
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'barber_profile'
+  AND COLUMN_NAME = 'longitude'
 
 UNION ALL
 SELECT 'site_settings.commission_mode',

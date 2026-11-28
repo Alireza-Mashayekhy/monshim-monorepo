@@ -16,6 +16,8 @@ export interface InitiatePaymentResponse {
 
 export interface InitiateSubscriptionPaymentDto {
   subscriptionPlanId: string;
+  /** کد تخفیف اختیاری — اعتبارسنجی و مبلغ در بک‌اند از روی پلن محاسبه می‌شود */
+  discountCode?: string;
 }
 
 export interface InitiateBookingPaymentDto {

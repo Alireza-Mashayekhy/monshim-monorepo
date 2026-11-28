@@ -14,6 +14,7 @@ import {
   PUBLIC_PAGE_PLAN_TYPE,
   PUBLIC_PAGE_TRIAL_PLAN_KEY,
   SMS_PLAN_TYPE,
+  SMS_TRIAL_PLAN_KEY,
   SUBSCRIPTION_PLANS,
   SubscriptionPlanType,
 } from 'src/subscription/constants';
@@ -50,6 +51,99 @@ export class UserSubscriptionService {
     @Optional()
     private readonly frontendRevalidationService?: FrontendRevalidationService,
   ) {}
+
+  /** Serialize queue changes across purchases, consumption and readers on the user row. */
+  private async lockSubscriptionUser(userId: number, manager: EntityManager) {
+    const user = await manager.getRepository(User).findOne({
+      where: { id: userId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!user) throw new NotFoundException('کاربر یافت نشد');
+  }
+
+  /** Caller must hold the user lock. Reserved rows have placeholder dates until promotion. */
+  private async syncSmsQueueLocked(
+    userId: number,
+    manager: EntityManager,
+    now: Date,
+  ) {
+    const repo = manager.getRepository(UserSubscription);
+    // A locking read is essential under MySQL REPEATABLE READ: an enclosing
+    // booking transaction may already have established an older snapshot.
+    const rows = await repo
+      .createQueryBuilder('subscription')
+      .innerJoinAndSelect('subscription.subscriptionPlan', 'plan')
+      .where('subscription.userId = :userId', { userId })
+      .andWhere('subscription.status IN (:...statuses)', {
+        statuses: [
+          UserSubscriptionStatus.ACTIVE,
+          UserSubscriptionStatus.RESERVED,
+        ],
+      })
+      .andWhere('plan.planType = :planType', { planType: SMS_PLAN_TYPE })
+      .orderBy('subscription.createdAt', 'ASC')
+      .addOrderBy('subscription.id', 'ASC')
+      .setLock('pessimistic_write')
+      .getMany();
+    let expired = 0;
+    for (const row of rows) {
+      if (row.status !== UserSubscriptionStatus.ACTIVE) continue;
+      // Old renewals were stored ACTIVE with a future start, often leaving no
+      // usable current plan. Treat those as queued purchases instead.
+      if (new Date(row.startDate).getTime() > now.getTime()) {
+        row.status = UserSubscriptionStatus.RESERVED;
+        await repo.save(row);
+        continue;
+      }
+      const exhausted =
+        Number(row.smsTotal) > 0 && Number(row.smsUsed) >= Number(row.smsTotal);
+      if (new Date(row.endDate).getTime() <= now.getTime() || exhausted) {
+        row.status = UserSubscriptionStatus.EXPIRED;
+        await repo.save(row);
+        expired++;
+      }
+    }
+    let active =
+      rows.find(row => row.status === UserSubscriptionStatus.ACTIVE) ?? null;
+    while (!active) {
+      const next = rows.find(
+        row => row.status === UserSubscriptionStatus.RESERVED,
+      );
+      if (!next) break;
+      next.status = UserSubscriptionStatus.ACTIVE;
+      next.startDate = new Date(now);
+      next.endDate = addPlanDuration(
+        next.startDate,
+        next.subscriptionPlan.durationDays,
+        SMS_PLAN_TYPE,
+      );
+      if (
+        next.endDate.getTime() <= now.getTime() ||
+        (Number(next.smsTotal) > 0 &&
+          Number(next.smsUsed) >= Number(next.smsTotal))
+      ) {
+        next.status = UserSubscriptionStatus.EXPIRED;
+        expired++;
+      } else {
+        active = next;
+      }
+      await repo.save(next);
+    }
+    return { active, rows, expired };
+  }
+
+  /** On-demand promotion starts at actual activation; a delayed cron never burns a reserved term. */
+  async syncAndPromoteUserSubscriptions(
+    userId: number,
+    manager?: EntityManager,
+  ) {
+    if (!manager)
+      return this.userSubscriptionRepo.manager.transaction(tx =>
+        this.syncAndPromoteUserSubscriptions(userId, tx),
+      );
+    await this.lockSubscriptionUser(userId, manager);
+    return this.syncSmsQueueLocked(userId, manager, new Date());
+  }
 
   /**
    * انقضای خودکار اشتراک‌ها.
@@ -98,10 +192,39 @@ export class UserSubscriptionService {
       .update(UserSubscription)
       .set({ status: UserSubscriptionStatus.EXPIRED })
       .where('status = :status', { status: UserSubscriptionStatus.ACTIVE })
-      .andWhere('end_date < :now', { now })
+      .andWhere('end_date <= :now', { now })
+      .andWhere(
+        'subscription_plan_id IN (SELECT id FROM subscription_plans WHERE plan_type = :planType)',
+        { planType: PUBLIC_PAGE_PLAN_TYPE },
+      )
       .execute();
 
-    const affected = result.affected ?? 0;
+    const smsUsers = await this.userSubscriptionRepo
+      .createQueryBuilder('subscription')
+      .innerJoin('subscription.subscriptionPlan', 'plan')
+      .select('DISTINCT subscription.userId', 'userId')
+      .where('plan.planType = :planType', { planType: SMS_PLAN_TYPE })
+      .andWhere('subscription.status IN (:...statuses)', {
+        statuses: [
+          UserSubscriptionStatus.ACTIVE,
+          UserSubscriptionStatus.RESERVED,
+        ],
+      })
+      .getRawMany<{ userId: string | number }>();
+    let smsExpired = 0;
+    for (const row of smsUsers) {
+      const userId = Number(row.userId);
+      if (!Number.isInteger(userId) || userId < 1) continue;
+      try {
+        smsExpired += (await this.syncAndPromoteUserSubscriptions(userId))
+          .expired;
+      } catch (error) {
+        this.logger.error(
+          `همگام‌سازی اشتراک پیامکی کاربر ${userId} ناموفق بود: ${String(error)}`,
+        );
+      }
+    }
+    const affected = (result.affected ?? 0) + smsExpired;
     if (affected > 0) {
       this.logger.log(`${affected} اشتراک منقضی‌شده به‌صورت خودکار بسته شد`);
     }
@@ -133,6 +256,10 @@ export class UserSubscriptionService {
     planType: SubscriptionPlanType = SMS_PLAN_TYPE,
     manager?: EntityManager,
   ) {
+    if (planType === SMS_PLAN_TYPE) {
+      return (await this.syncAndPromoteUserSubscriptions(userId, manager))
+        .active;
+    }
     const repo = manager
       ? manager.getRepository(UserSubscription)
       : this.userSubscriptionRepo;
@@ -219,6 +346,8 @@ export class UserSubscriptionService {
    */
   async findSmsSubscriptionsForUsers(userIds: number[]) {
     if (userIds.length === 0) return [];
+    for (const userId of [...new Set(userIds)])
+      await this.syncAndPromoteUserSubscriptions(userId);
 
     return this.userSubscriptionRepo
       .createQueryBuilder('subscription')
@@ -232,6 +361,7 @@ export class UserSubscriptionService {
   }
 
   async findAll(userId: number) {
+    await this.syncAndPromoteUserSubscriptions(userId);
     return this.userSubscriptionRepo.find({
       where: {
         userId,
@@ -241,6 +371,7 @@ export class UserSubscriptionService {
       },
       order: {
         createdAt: 'DESC',
+        id: 'DESC',
       },
     });
   }
@@ -268,21 +399,96 @@ export class UserSubscriptionService {
    * نمایش می‌دهد). پلن‌های پروفایل اختصاصی اینجا نیستند.
    */
   async getActivePlans() {
-    return this.subscriptionPlanRepo.find({
-      where: {
-        isActive: true,
-        planType: SMS_PLAN_TYPE,
-      },
-      order: {
-        sortOrder: 'ASC',
-        price: 'ASC',
-      },
-    });
+    return this.subscriptionService.findActiveSmsPlans();
   }
 
   /** پلن‌های قابل انتخاب برای خرید/تمدید پروفایل اختصاصی. */
   getPublicPagePlans() {
     return this.subscriptionService.findPublicPagePurchasePlans();
+  }
+
+  /** One welcome gift per user, serialized with SMS purchases and consumption. */
+  async grantFreeSmsTrial(
+    userId: number,
+    manager?: EntityManager,
+  ): Promise<{ subscription: UserSubscription; created: boolean }> {
+    if (!manager) {
+      return this.userSubscriptionRepo.manager.transaction(tx =>
+        this.grantFreeSmsTrial(userId, tx),
+      );
+    }
+
+    await this.lockSubscriptionUser(userId, manager);
+    const planRepo = manager.getRepository(SubscriptionPlan);
+    const subscriptionRepo = manager.getRepository(UserSubscription);
+    const definition = SUBSCRIPTION_PLANS.find(
+      item => item.planKey === SMS_TRIAL_PLAN_KEY,
+    );
+    if (!definition)
+      throw new Error(`Missing ${SMS_TRIAL_PLAN_KEY} plan definition`);
+    let plan = await planRepo.findOne({
+      where: { planKey: SMS_TRIAL_PLAN_KEY },
+    });
+
+    if (!plan) {
+      try {
+        plan = await planRepo.save(
+          planRepo.create({ ...definition, isActive: true }),
+        );
+      } catch (error) {
+        if (!isDuplicateEntryError(error)) throw error;
+        // A locking read sees the winning insert even if the signup transaction
+        // already established a REPEATABLE READ snapshot before the conflict.
+        plan = await planRepo.findOne({
+          where: { planKey: SMS_TRIAL_PLAN_KEY },
+          lock: { mode: 'pessimistic_write' },
+        });
+      }
+      if (!plan) throw new Error(`Unable to create ${SMS_TRIAL_PLAN_KEY} plan`);
+    }
+
+    // Unlike purchasable plans, the gift has a fixed entitlement. Correct a
+    // stale or accidentally edited row before deriving the new subscription.
+    if (
+      plan.planType !== SMS_PLAN_TYPE ||
+      Number(plan.smsCount) !== definition.smsCount ||
+      Number(plan.price) !== 0 ||
+      plan.durationDays !== definition.durationDays
+    ) {
+      plan.planType = SMS_PLAN_TYPE;
+      plan.smsCount = definition.smsCount;
+      plan.price = 0;
+      plan.durationDays = definition.durationDays;
+      plan = await planRepo.save(plan);
+    }
+
+    // Locking read, not a snapshot read: another transaction may have committed
+    // an SMS subscription while this transaction waited for the user lock.
+    const existing = await subscriptionRepo
+      .createQueryBuilder('subscription')
+      .innerJoinAndSelect('subscription.subscriptionPlan', 'plan')
+      .where('subscription.userId = :userId', { userId })
+      .andWhere('plan.planType = :planType', { planType: SMS_PLAN_TYPE })
+      .orderBy('subscription.createdAt', 'DESC')
+      .setLock('pessimistic_write')
+      .getOne();
+    if (existing) return { subscription: existing, created: false };
+
+    const now = new Date();
+    const saved = await subscriptionRepo.save(
+      subscriptionRepo.create({
+        userId,
+        subscriptionPlanId: plan.id,
+        price: 0,
+        smsTotal: Number(plan.smsCount),
+        smsUsed: 0,
+        status: UserSubscriptionStatus.ACTIVE,
+        startDate: now,
+        endDate: addPlanDuration(now, plan.durationDays, SMS_PLAN_TYPE),
+        freeTrialSmsSentAt: null,
+      }),
+    );
+    return { subscription: saved, created: true };
   }
 
   /**
@@ -358,6 +564,7 @@ export class UserSubscriptionService {
         if (!isDuplicateEntryError(error)) throw error;
         plan = await planRepo.findOne({
           where: { planKey: PUBLIC_PAGE_TRIAL_PLAN_KEY },
+          lock: { mode: 'pessimistic_write' },
         });
       }
 
@@ -594,17 +801,7 @@ export class UserSubscriptionService {
     );
   }
 
-  /**
-   * ثبت اشتراک پس از پرداخت موفق.
-   *
-   * قاعدهٔ تمدید: اگر اشتراک فعالِ هم‌نوعی قبل از پایان اعتبارش وجود داشته
-   * باشد، مدتٔ پلن جدید به **انتهای اعتبار فعلی** اضافه می‌شود و اعتبار
-   * پیامکیِ باقی‌مانده هم به پلن جدید منتقل می‌شود. اگر اشتراک منقضی شده
-   * باشد (یا اصلاً وجود نداشته باشد)، اعتبار از زمان پرداخت موفق می‌شمارد.
-   *
-   * برای هر خرید یک رکورد اشتراک جدید ساخته می‌شود تا پلن خریداری‌شده،
-   * مبلغ، مدت و تاریخ‌های شروع/پایان هر خرید به‌درستی در سوابق بماند.
-   */
+  /** SMS purchases are serialized and queued until activation; public-page renewals retain their existing behavior. */
   async activateSubscriptionAfterPayment(
     userId: number,
     planId: string,
@@ -618,6 +815,42 @@ export class UserSubscriptionService {
         `activateSubscriptionAfterPayment: پلن ${planId} یافت نشد для کاربر ${userId}`,
       );
       return null;
+    }
+
+    if (plan.planType === SMS_PLAN_TYPE) {
+      return this.userSubscriptionRepo.manager.transaction(async manager => {
+        await this.lockSubscriptionUser(userId, manager);
+        const now = new Date();
+        const { active, rows } = await this.syncSmsQueueLocked(
+          userId,
+          manager,
+          now,
+        );
+        const queued =
+          active ||
+          rows.some(
+            row =>
+              row.status === UserSubscriptionStatus.ACTIVE ||
+              row.status === UserSubscriptionStatus.RESERVED,
+          );
+        const repo = manager.getRepository(UserSubscription);
+        return repo.save(
+          repo.create({
+            userId,
+            subscriptionPlanId: plan.id,
+            price: plan.price,
+            smsTotal: Number(plan.smsCount ?? 0),
+            smsUsed: 0,
+            status: queued
+              ? UserSubscriptionStatus.RESERVED
+              : UserSubscriptionStatus.ACTIVE,
+            // Non-null schema: dates are placeholders only while RESERVED.
+            startDate: now,
+            endDate: addPlanDuration(now, plan.durationDays, SMS_PLAN_TYPE),
+            freeTrialSmsSentAt: null,
+          }),
+        );
+      });
     }
 
     const now = new Date();
@@ -710,16 +943,9 @@ export class UserSubscriptionService {
   }
 
   /**
-   * کسر اتمیک سهمیهٔ پیامک.
-   *
-   * • منبع تشخیص اشتراک فعال همان `getCurrent` است (نوع پلن sms + وضعیت
-   *   ACTIVE + بازهٔ startDate تا endDate).
-   * • خودِ کسر با یک UPDATE شرطی انجام می‌شود؛ دو درخواست هم‌زمان هرگز
-   *   نمی‌توانند از یک اعتبار دو بار عبور کنند و کسر «تکراری/اشتباه» ممکن
-   *   نیست.
-   * • اگر `manager` داده شود، خوانش و کسر **درون همان تراکنش** انجام
-   *   می‌شود؛ مثلاً در ثبت رزرو دستی، اگر ثبت نوبت شکست بخورد رول‌بک شامل
-   *   کسر سهمیه هم می‌شود و اعتباری به‌اشتباه از بین نمی‌رود.
+   * Atomically debit the active plan and, if necessary, subsequent reserved
+   * plans. The user-row lock serializes purchases, promotion and consumption;
+   * the supplied manager makes the entire operation part of the caller's transaction.
    */
   async deductSms(
     userId: number,
@@ -727,73 +953,74 @@ export class UserSubscriptionService {
     reason = 'ارسال پیامک',
     manager?: EntityManager,
   ): Promise<UserSubscription> {
-    if (count < 1) {
+    if (!Number.isInteger(count) || count < 1) {
       throw new BadRequestException('تعداد پیامک برای کسر باید حداقل ۱ باشد');
     }
-
-    const subscriptionRepo = manager
-      ? manager.getRepository(UserSubscription)
-      : this.userSubscriptionRepo;
-    const smsUsageRepo = manager
-      ? manager.getRepository(SmsUsage)
-      : this.smsUsageRepo;
-
-    const subscription = await this.getCurrent(userId, SMS_PLAN_TYPE, manager);
-
-    if (!subscription) {
+    if (!manager)
+      return this.userSubscriptionRepo.manager.transaction(tx =>
+        this.deductSms(userId, count, reason, tx),
+      );
+    await this.lockSubscriptionUser(userId, manager);
+    const repo = manager.getRepository(UserSubscription);
+    const usageRepo = manager.getRepository(SmsUsage);
+    const now = new Date();
+    let { active, rows } = await this.syncSmsQueueLocked(userId, manager, now);
+    if (!active)
       throw new BadRequestException(
         'برای ارسال پیامک ابتدا باید یکی از پلن‌های اشتراک را خریداری کنید',
       );
-    }
-
-    const remaining = subscription.smsTotal - subscription.smsUsed;
-
-    if (remaining < count) {
-      throw new BadRequestException(
-        `اعتبار پیامک کافی نیست (پیامک باقی‌مانده: ${remaining})`,
+    const available = rows
+      .filter(
+        row =>
+          row.id === active!.id ||
+          row.status === UserSubscriptionStatus.RESERVED,
+      )
+      .reduce(
+        (sum, row) =>
+          sum + Math.max(0, Number(row.smsTotal) - Number(row.smsUsed)),
+        0,
       );
+    if (available < count)
+      throw new BadRequestException(
+        `اعتبار پیامک کافی نیست (پیامک باقی‌مانده: ${available})`,
+      );
+    let left = count;
+    let last = active;
+    while (left > 0 && active) {
+      const remaining = Math.max(
+        0,
+        Number(active.smsTotal) - Number(active.smsUsed),
+      );
+      const used = Math.min(left, remaining);
+      if (!used)
+        throw new BadRequestException(
+          'اعتبار پیامک کافی نیست یا اشتراک شما تغییر کرده است. صفحه را بازخوانی کنید',
+        );
+      active.smsUsed = Number(active.smsUsed) + used;
+      await repo.save(active);
+      await usageRepo.save(
+        usageRepo.create({
+          userId,
+          userSubscriptionId: active.id,
+          count: used,
+          reason,
+        }),
+      );
+      last = active;
+      left -= used;
+      if (active.smsTotal > 0 && active.smsUsed >= active.smsTotal) {
+        ({ active, rows } = await this.syncSmsQueueLocked(
+          userId,
+          manager,
+          now,
+        ));
+      }
     }
-
-    /**
-     * کسر اتمیک: شمارنده فقط اگر واقعاً اعتبار کافی باشد زیاد می‌شود.
-     *
-     * پیش از این مقدار خوانده و بعد ذخیره می‌شد؛ دو درخواست هم‌زمان
-     * می‌توانستند هر دو از یک اعتبار عبور کنند و یکی از کسرها از بین برود
-     * (اعتبار پیامک بیشتر از واقع مصرف می‌شد).
-     */
-    const updateResult = await subscriptionRepo
-      .createQueryBuilder()
-      .update(UserSubscription)
-      .set({ smsUsed: () => 'sms_used + :count' })
-      .where('id = :id', { id: subscription.id })
-      .andWhere('status = :status', {
-        status: UserSubscriptionStatus.ACTIVE,
-      })
-      .andWhere('sms_used + :count <= sms_total')
-      .setParameters({ count })
-      .execute();
-
-    if (!updateResult.affected) {
+    if (left > 0)
       throw new BadRequestException(
         'اعتبار پیامک کافی نیست یا اشتراک شما تغییر کرده است. صفحه را بازخوانی کنید',
       );
-    }
-
-    // ثبت در دفتر مصرف پیامک (درون همان تراکنش، وقتی manager داده شده باشد)
-    await smsUsageRepo.save(
-      smsUsageRepo.create({
-        userId,
-        userSubscriptionId: subscription.id,
-        count,
-        reason,
-      }),
-    );
-
-    return (
-      (await subscriptionRepo.findOne({
-        where: { id: subscription.id },
-      })) ?? subscription
-    );
+    return active ?? last;
   }
 
   async getSmsUsageHistory(userId: number) {

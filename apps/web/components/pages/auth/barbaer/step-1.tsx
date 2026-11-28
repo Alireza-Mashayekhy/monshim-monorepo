@@ -6,8 +6,8 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 
+import { BirthDatePicker } from '@/components/form/birth-date-picker';
 import FormProvider from '@/components/form/form-provider';
-import { PersianDatePicker } from '@/components/form/persian-date-picker';
 import RHFInput from '@/components/form/rhf-input';
 import RHFPhoneInput from '@/components/form/rhf-phone-input';
 import StepFooter from '@/components/pages/auth/barbaer/step-footer';
@@ -104,11 +104,10 @@ export default function BarbaerStep1({ onSubmit }: Step1Props) {
             sanitize={sanitizeNationalCodeInput}
             startIcon={<IdCard className="w-4 h-4" />}
           />
-          <PersianDatePicker
+          <BirthDatePicker
             name="birthDate"
             label="تاریخ تولد"
             placeholder="انتخاب تاریخ تولد"
-            portal
           />
           <RHFInput
             name="password"

@@ -34,7 +34,7 @@ export default function TicketSenderBadge({
       }
       className={cn(
         'inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold',
-        isBarber ? 'bg-primary-50 text-primary-700' : 'bg-gray-100 text-gray-600',
+        isBarber ? 'bg-primary-2 text-primary' : 'bg-gray-100 text-gray-600',
         className,
       )}
     >

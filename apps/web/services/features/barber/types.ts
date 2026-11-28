@@ -39,6 +39,12 @@ export interface BarberResponse {
   isAccountActive?: boolean;
   isAdminAccount?: boolean;
   slug?: string | null;
+  barberProfileId?: string | null;
+  publicUrl?: string | null;
+  publicPageAvailability?: {
+    status: 'NOT_SETUP' | 'ACTIVE' | 'INACTIVE' | 'UNKNOWN';
+    reason: 'NO_SLUG' | 'ACCOUNT_INACTIVE' | 'NOT_APPROVED' | 'HIDDEN' | 'NO_ACTIVE_SERVICE' | 'SUBSCRIPTION_UNKNOWN' | 'NO_ACTIVE_SUBSCRIPTION' | null;
+  };
   createdAt?: string;
   hasPendingChanges?: boolean;
   isEditReview?: boolean;
@@ -48,6 +54,7 @@ export interface BarberResponse {
    * `public_page` برای این آرایشگر وجود ندارد.
    */
   publicPageSubscription?: PublicPageSubscriptionStatus | null;
+  publicPageSubscriptionKnown?: boolean;
   /**
    * وضعیت واقعی اشتراک «پیامکی» با سهمیه و مصرف آن (فقط در فهرست مدیریت
    * ادمین پر می‌شود؛ از همان منطق مرکزی بک‌اند). پلن فعال بر اساس
@@ -85,6 +92,19 @@ export interface Barber {
   city: Pick<CityResponse, 'id' | 'name' | 'slug' | 'provinceId'> | null;
   province: Pick<ProvinceResponse, 'id' | 'name' | 'slug'> | null;
   userId?: number;
+  // ---- راه‌های ارتباطی و موقعیت مکانی (صفحهٔ اختصاصی) ----
+  /** شماره تماس سالن (برای دکمهٔ «تماس»)؛ فقط وقتی ثبت شده باشد. */
+  contactPhone?: string | null;
+  /** شناسهٔ اینستاگرام بدون @ و لینک. */
+  instagram?: string | null;
+  /** شماره واتساپ به فرمت `09…`. */
+  whatsapp?: string | null;
+  /** شناسهٔ تلگرام بدون @ و لینک. */
+  telegram?: string | null;
+  /** عرض جغرافیایی؛ فقط با longitude (مسیریابی گوگل‌مپ/اسنپ). */
+  latitude?: number | null;
+  /** طول جغرافیایی؛ فقط با latitude. */
+  longitude?: number | null;
 }
 
 export interface PublicCityDirectoryEntry {
@@ -133,6 +153,13 @@ export interface BarberProfile {
   isEditReview?: boolean;
   pendingRejectionReason?: string | null;
   currentApprovedProfile?: ApprovedProfileSnapshot | null;
+  // ---- راه‌های ارتباطی و موقعیت مکانی (برای نمایش ثبت/ثبت‌نشده در داشبورد) ----
+  contactPhone?: string | null;
+  instagram?: string | null;
+  whatsapp?: string | null;
+  telegram?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   createdAt: string;
 }
 
@@ -153,6 +180,13 @@ export interface UpdateBarberProfile {
   profileImage?: string | null;
   isApproved?: boolean;
   rejectionReason?: string | null;
+  // ---- راه‌های ارتباطی و موقعیت مکانی (بدون نیاز به تأیید مجدد) ----
+  contactPhone?: string | null;
+  instagram?: string | null;
+  whatsapp?: string | null;
+  telegram?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface MyReferral {
@@ -269,7 +303,15 @@ export interface ModerateBarberReviewDto {
   adminNote?: string | null;
 }
 
+export type ReviewEligibilityReason =
+  | 'ELIGIBLE'
+  | 'ALREADY_REVIEWED'
+  | 'NO_BOOKING'
+  | 'BOOKING_NOT_COMPLETED_YET'
+  | 'OWN_PROFILE';
+
 export interface MyBarberReviewInfo {
   myReview: BarberReview | null;
   canReview: boolean;
+  eligibilityReason: ReviewEligibilityReason;
 }

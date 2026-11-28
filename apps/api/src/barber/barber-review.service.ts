@@ -201,8 +201,18 @@ export class BarberReviewService implements OnModuleInit {
       where: { barberId: profile.id, customerId },
     });
 
-    let canReview = false;
-    if (!myReview && profile.userId !== customerId) {
+    let eligibilityReason:
+      | 'ELIGIBLE'
+      | 'ALREADY_REVIEWED'
+      | 'NO_BOOKING'
+      | 'BOOKING_NOT_COMPLETED_YET'
+      | 'OWN_PROFILE';
+
+    if (profile.userId === customerId) {
+      eligibilityReason = 'OWN_PROFILE';
+    } else if (myReview) {
+      eligibilityReason = 'ALREADY_REVIEWED';
+    } else {
       const bookingCount = await this.bookingRepo.count({
         where: {
           customerId,
@@ -210,13 +220,30 @@ export class BarberReviewService implements OnModuleInit {
           status: In(BOOKING_STATUSES_ELIGIBLE_FOR_REVIEW),
         },
       });
-      canReview = bookingCount > 0;
+      if (bookingCount > 0) {
+        eligibilityReason = 'ELIGIBLE';
+      } else {
+        const pendingCount = await this.bookingRepo.count({
+          where: {
+            customerId,
+            barberId: profile.id,
+            status: In([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
+          },
+        });
+        eligibilityReason =
+          pendingCount > 0 ? 'BOOKING_NOT_COMPLETED_YET' : 'NO_BOOKING';
+      }
     }
 
     return {
       data: {
-        myReview: myReview ? this.sanitize(myReview) : null,
-        canReview,
+        myReview: myReview
+          ? this.sanitize(myReview, {
+              includeAdminNote: myReview.status === BarberReviewStatus.REJECTED,
+            })
+          : null,
+        canReview: eligibilityReason === 'ELIGIBLE',
+        eligibilityReason,
       },
     };
   }

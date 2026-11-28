@@ -1,15 +1,3 @@
-/**
- * تست‌های واحد کسر اتمیک سهمیهٔ پیامک (`deductSms`).
- *
- * سناریوهای پوشش‌داده‌شده:
- * ۱. بدون اشتراک پیامکی → خطای «پلن را خریداری کنید» و هیچ کسری.
- * ۲. اعتبار ناکافی → خطای دقیق با عدد باقی‌مانده و هیچ کسری.
- * ۳. کسر موفق → UPDATE شرطی اتمیک + ثبت در دفتر مصرف + بازگشت اشتراک تازه.
- * ۴. باخت رقابت هم‌زمانی (affected=0) → خطا و هیچ ثبت مصرف.
- * ۵. حالت تراکنشی: همهٔ خوانش/نوشت‌ها از EntityManager همان تراکنش.
- */
-import { EntityManager } from 'typeorm';
-
 jest.mock('@nestjs/schedule', () => ({
   Cron: () => () => undefined,
   CronExpression: { EVERY_HOUR: '0 0 * * * *' },
@@ -18,241 +6,191 @@ jest.mock('@nestjs/schedule', () => ({
 import { UserSubscriptionStatus } from './entities/user-subscription.entity';
 import { UserSubscriptionService } from './user-subscription.service';
 
-function buildQueryBuilder(end: { getOne?: unknown; affected?: number }) {
+function row(
+  id: string,
+  status: UserSubscriptionStatus,
+  total: number,
+  used: number,
+  order = 0,
+) {
+  return {
+    id,
+    userId: 100,
+    subscriptionPlanId: 'plan',
+    status,
+    smsTotal: total,
+    smsUsed: used,
+    createdAt: new Date(2026, 1, 1 + order),
+    startDate: new Date('2020-01-01T00:00:00Z'),
+    endDate: new Date('2099-01-01T00:00:00Z'),
+    subscriptionPlan: {
+      id: 'plan',
+      planType: 'sms',
+      durationDays: 30,
+      smsCount: 10,
+      price: 100,
+    },
+  };
+}
+
+function harness(initial: ReturnType<typeof row>[]) {
+  const rows = initial;
+  const usages: any[] = [];
   const qb: any = {};
   for (const method of [
+    'innerJoinAndSelect',
     'where',
     'andWhere',
-    'update',
-    'set',
-    'setParameters',
     'orderBy',
-    'innerJoinAndSelect',
-  ]) {
+    'addOrderBy',
+    'setLock',
+  ])
     qb[method] = jest.fn().mockReturnThis();
-  }
-  qb.getOne = jest.fn().mockResolvedValue(end.getOne ?? null);
-  qb.execute = jest.fn().mockResolvedValue({ affected: end.affected ?? 1 });
-  return qb;
-}
-
-function makeSubscription(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'sub-1',
-    userId: 100,
-    subscriptionPlanId: 'plan-1',
-    price: 59000,
-    smsTotal: 10,
-    smsUsed: 8,
-    status: UserSubscriptionStatus.ACTIVE,
-    startDate: new Date('2026-06-01T00:00:00.000Z'),
-    endDate: new Date('2099-07-01T00:00:00.000Z'),
-    subscriptionPlan: { planType: 'sms', planKey: 'starter' },
-    ...overrides,
-  };
-}
-
-type Harness = {
-  service: UserSubscriptionService;
-  subscriptionRepo: any;
-  smsUsageRepo: any;
-  readQb: ReturnType<typeof buildQueryBuilder>;
-  writeQb: ReturnType<typeof buildQueryBuilder>;
-};
-
-function buildHarness(options?: {
-  subscription?: unknown;
-  updateAffected?: number;
-}): Harness {
-  const readQb = buildQueryBuilder({ getOne: options?.subscription ?? null });
-  const writeQb = buildQueryBuilder({
-    affected: options?.updateAffected ?? 1,
-  });
-
+  qb.getMany = jest.fn(async () =>
+    rows
+      .filter(item =>
+        [
+          UserSubscriptionStatus.ACTIVE,
+          UserSubscriptionStatus.RESERVED,
+        ].includes(item.status),
+      )
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
+  );
   const subscriptionRepo: any = {
-    createQueryBuilder: jest.fn(() => readQb),
-    findOne: jest.fn().mockResolvedValue(options?.subscription ?? null),
-    find: jest.fn().mockResolvedValue([]),
-    manager: { transaction: jest.fn() },
+    createQueryBuilder: jest.fn(() => qb),
+    save: jest.fn(async value => value),
   };
-  const smsUsageRepo: any = {
-    create: jest.fn(input => ({ ...input })),
-    save: jest.fn().mockResolvedValue(undefined),
+  const usageRepo: any = {
+    create: (value: any) => value,
+    save: jest.fn(async value => {
+      usages.push(value);
+      return value;
+    }),
   };
-  const planRepo: any = { find: jest.fn().mockResolvedValue([]) };
-
-  // دوباره: getCurrent از createQueryBuilder('subscription') و کسر از
-  // createQueryBuilder() استفاده می‌کند — ترتیب فراخوانی را جدا می‌کنیم.
-  subscriptionRepo.createQueryBuilder = jest
-    .fn()
-    .mockImplementation((alias?: string) => (alias ? readQb : writeQb));
-
+  const userRepo = { findOne: jest.fn().mockResolvedValue({ id: 100 }) };
+  const manager: any = {
+    getRepository: jest.fn((entity: any) =>
+      entity.name === 'UserSubscription'
+        ? subscriptionRepo
+        : entity.name === 'SmsUsage'
+          ? usageRepo
+          : userRepo,
+    ),
+  };
+  subscriptionRepo.manager = { transaction: jest.fn((fn: any) => fn(manager)) };
   const service = new UserSubscriptionService(
     subscriptionRepo,
-    planRepo,
-    smsUsageRepo,
     {} as any,
-    undefined,
+    usageRepo,
+    {} as any,
   );
-
-  return { service, subscriptionRepo, smsUsageRepo, readQb, writeQb };
+  return { rows, usages, service, manager, qb, userRepo, subscriptionRepo };
 }
 
-describe('UserSubscriptionService.deductSms', () => {
-  it('rejects with a clear message when there is no active SMS subscription', async () => {
-    const { service, writeQb, smsUsageRepo } = buildHarness({
-      subscription: null,
-    });
-
-    await expect(service.deductSms(100, 2, 'تست')).rejects.toThrow(
+describe('deductSms queue', () => {
+  it('rejects no subscription and invalid counts', async () => {
+    const h = harness([]);
+    await expect(h.service.deductSms(100, 1)).rejects.toThrow(
       'برای ارسال پیامک ابتدا باید یکی از پلن‌های اشتراک را خریداری کنید',
     );
-
-    expect(writeQb.execute).not.toHaveBeenCalled();
-    expect(smsUsageRepo.save).not.toHaveBeenCalled();
-  });
-
-  it('rejects with the exact remaining credit when the quota is insufficient', async () => {
-    const { service, writeQb, smsUsageRepo } = buildHarness({
-      subscription: makeSubscription({ smsTotal: 10, smsUsed: 9 }),
-    });
-
-    await expect(service.deductSms(100, 2, 'تست')).rejects.toThrow(
-      'اعتبار پیامک کافی نیست (پیامک باقی‌مانده: 1)',
-    );
-
-    expect(writeQb.execute).not.toHaveBeenCalled();
-    expect(smsUsageRepo.save).not.toHaveBeenCalled();
-  });
-
-  it('deducts atomically and records the usage ledger entry', async () => {
-    const subscription = makeSubscription({ smsTotal: 10, smsUsed: 8 });
-    const { service, writeQb, smsUsageRepo, subscriptionRepo } = buildHarness({
-      subscription,
-    });
-
-    const result = await service.deductSms(100, 2, 'پیامک تأیید نوبت دستی');
-
-    // UPDATE شرطی اتمیک: فقط وقتی sms_used + count <= sms_total
-    expect(writeQb.update).toHaveBeenCalled();
-    expect(writeQb.where).toHaveBeenCalledWith('id = :id', { id: 'sub-1' });
-    expect(writeQb.andWhere).toHaveBeenCalledWith(
-      'sms_used + :count <= sms_total',
-    );
-    expect(writeQb.execute).toHaveBeenCalledTimes(1);
-
-    // ثبت در دفتر مصرف پیامک
-    expect(smsUsageRepo.create).toHaveBeenCalledWith({
-      userId: 100,
-      userSubscriptionId: 'sub-1',
-      count: 2,
-      reason: 'پیامک تأیید نوبت دستی',
-    });
-    expect(smsUsageRepo.save).toHaveBeenCalledTimes(1);
-
-    // بازگشت وضعیت تازهٔ همان اشتراک
-    expect(subscriptionRepo.findOne).toHaveBeenCalledWith({
-      where: { id: 'sub-1' },
-    });
-    expect(result).toBe(subscription);
-  });
-
-  it('loses the race safely: no ledger entry when the conditional update affects nothing', async () => {
-    // درخواست هم‌زمان اعتبار را برده و شرط UPDATE دیگر برقرار نیست
-    const { service, smsUsageRepo } = buildHarness({
-      subscription: makeSubscription({ smsTotal: 10, smsUsed: 9 }),
-      updateAffected: 0,
-    });
-
-    await expect(service.deductSms(100, 1, 'تست رقابت')).rejects.toThrow(
-      'اعتبار پیامک کافی نیست یا اشتراک شما تغییر کرده است. صفحه را بازخوانی کنید',
-    );
-
-    expect(smsUsageRepo.save).not.toHaveBeenCalled();
-  });
-
-  it('runs every read and write through the transaction manager when provided', async () => {
-    const subscription = makeSubscription({ smsTotal: 10, smsUsed: 6 });
-    const readQb = buildQueryBuilder({ getOne: subscription });
-    const writeQb = buildQueryBuilder({ affected: 1 });
-
-    const txSubscriptionRepo: any = {
-      createQueryBuilder: jest
-        .fn()
-        .mockImplementation((alias?: string) => (alias ? readQb : writeQb)),
-      findOne: jest.fn().mockResolvedValue(subscription),
-    };
-    const txSmsUsageRepo: any = {
-      create: jest.fn(input => ({ ...input })),
-      save: jest.fn().mockResolvedValue(undefined),
-    };
-
-    const manager = {
-      getRepository: jest.fn(entity => {
-        if (entity.name === 'UserSubscription') {
-          return txSubscriptionRepo;
-        }
-        if (entity.name === 'SmsUsage') {
-          return txSmsUsageRepo;
-        }
-        throw new Error(`unexpected entity: ${entity.name}`);
-      }),
-    } as unknown as EntityManager;
-
-    const subscriptionRepo: any = {
-      createQueryBuilder: jest.fn(),
-      findOne: jest.fn(),
-    };
-    const smsUsageRepo: any = { create: jest.fn(), save: jest.fn() };
-
-    const service = new UserSubscriptionService(
-      subscriptionRepo,
-      {} as any,
-      smsUsageRepo,
-      {} as any,
-      undefined,
-    );
-
-    const result = await service.deductSms(
-      100,
-      2,
-      'پیامک تأیید نوبت دستی',
-      manager,
-    );
-
-    // همهٔ عملیات از رپوهای تراکنش انجام شده‌اند
-    const requestedEntities = (
-      manager.getRepository as jest.Mock
-    ).mock.calls.map(call => call[0]);
-    expect(requestedEntities).toHaveLength(3);
-    expect(
-      requestedEntities.filter(entity => entity.name === 'UserSubscription'),
-    ).toHaveLength(2);
-    expect(requestedEntities.some(entity => entity.name === 'SmsUsage')).toBe(
-      true,
-    );
-    expect(txSubscriptionRepo.createQueryBuilder).toHaveBeenCalledTimes(2);
-    expect(writeQb.execute).toHaveBeenCalledTimes(1);
-    expect(txSmsUsageRepo.save).toHaveBeenCalledTimes(1);
-    expect(txSubscriptionRepo.findOne).toHaveBeenCalledWith({
-      where: { id: 'sub-1' },
-    });
-
-    // هیچ عملیاتی از رپوهای بیرونِ تراکنش نرفته است
-    expect(subscriptionRepo.createQueryBuilder).not.toHaveBeenCalled();
-    expect(smsUsageRepo.save).not.toHaveBeenCalled();
-    expect(result).toBe(subscription);
-  });
-
-  it('rejects non-positive counts before touching the database', async () => {
-    const { service, readQb } = buildHarness({
-      subscription: makeSubscription(),
-    });
-
-    await expect(service.deductSms(100, 0, 'تست')).rejects.toThrow(
+    await expect(h.service.deductSms(100, 0)).rejects.toThrow(
       'تعداد پیامک برای کسر باید حداقل ۱ باشد',
     );
+    await expect(h.service.deductSms(100, 1.5)).rejects.toThrow(
+      'تعداد پیامک برای کسر باید حداقل ۱ باشد',
+    );
+  });
 
-    expect(readQb.getOne).not.toHaveBeenCalled();
+  it('debits across FIFO plans and promotes immediately on exact exhaustion', async () => {
+    const first = row('first', UserSubscriptionStatus.ACTIVE, 10, 9);
+    const next = row('next', UserSubscriptionStatus.RESERVED, 10, 0, 1);
+    const third = row('third', UserSubscriptionStatus.RESERVED, 10, 0, 2);
+    const h = harness([first, next, third]);
+    const before = Date.now();
+    await h.service.deductSms(100, 2, 'test');
+    expect(first).toMatchObject({
+      status: UserSubscriptionStatus.EXPIRED,
+      smsUsed: 10,
+    });
+    expect(next).toMatchObject({
+      status: UserSubscriptionStatus.ACTIVE,
+      smsUsed: 1,
+    });
+    expect(third.status).toBe(UserSubscriptionStatus.RESERVED);
+    expect(next.startDate.getTime()).toBeGreaterThanOrEqual(before);
+    expect(next.endDate.getTime() - next.startDate.getTime()).toBe(
+      30 * 86400000,
+    );
+    expect(h.usages).toEqual([
+      expect.objectContaining({ userSubscriptionId: 'first', count: 1 }),
+      expect.objectContaining({ userSubscriptionId: 'next', count: 1 }),
+    ]);
+    expect(h.userRepo.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ lock: { mode: 'pessimistic_write' } }),
+    );
+    expect(h.qb.setLock).toHaveBeenCalledWith('pessimistic_write');
+  });
+
+  it('expires at the exact end instant and promotes with a full term', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-03-01T00:00:00Z'));
+    try {
+      const first = row('first', UserSubscriptionStatus.ACTIVE, 10, 0);
+      first.endDate = new Date('2026-03-01T00:00:00Z');
+      const next = row('next', UserSubscriptionStatus.RESERVED, 10, 0, 1);
+      const h = harness([first, next]);
+      const result = await h.service.getCurrent(100);
+      expect(first.status).toBe(UserSubscriptionStatus.EXPIRED);
+      expect(result?.id).toBe('next');
+      expect(next.startDate.toISOString()).toBe('2026-03-01T00:00:00.000Z');
+      expect(next.endDate.toISOString()).toBe('2026-03-31T00:00:00.000Z');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('converts a legacy future ACTIVE renewal into the queue rather than blocking promotion', async () => {
+    const first = row('first', UserSubscriptionStatus.ACTIVE, 1, 0);
+    const legacy = row('legacy', UserSubscriptionStatus.ACTIVE, 10, 0, 1);
+    legacy.startDate = new Date('2090-01-01T00:00:00Z');
+    const h = harness([first, legacy]);
+    await h.service.deductSms(100, 1);
+    expect(first.status).toBe(UserSubscriptionStatus.EXPIRED);
+    expect(legacy.status).toBe(UserSubscriptionStatus.ACTIVE);
+    expect(legacy.startDate.getTime()).toBeLessThan(
+      Date.parse('2090-01-01T00:00:00Z'),
+    );
+  });
+
+  it('does not deduct anything when the whole queue has insufficient quota', async () => {
+    const first = row('first', UserSubscriptionStatus.ACTIVE, 10, 9);
+    const next = row('next', UserSubscriptionStatus.RESERVED, 3, 2, 1);
+    const h = harness([first, next]);
+    await expect(h.service.deductSms(100, 3)).rejects.toThrow(
+      'اعتبار پیامک کافی نیست (پیامک باقی‌مانده: 2)',
+    );
+    expect(first.smsUsed).toBe(9);
+    expect(next.status).toBe(UserSubscriptionStatus.RESERVED);
+    expect(h.usages).toHaveLength(0);
+  });
+
+  it('respects the caller transaction manager and does not start a second transaction', async () => {
+    const first = row('first', UserSubscriptionStatus.ACTIVE, 10, 2);
+    const h = harness([first]);
+    await h.service.deductSms(100, 2, 'test', h.manager);
+    expect(h.subscriptionRepo.manager.transaction).not.toHaveBeenCalled();
+    expect(first.smsUsed).toBe(4);
+    expect(h.usages).toEqual([
+      expect.objectContaining({ userSubscriptionId: 'first', count: 2 }),
+    ]);
+  });
+
+  it('promotes the first queued plan even when the final credit is consumed exactly', async () => {
+    const first = row('first', UserSubscriptionStatus.ACTIVE, 1, 0);
+    const next = row('next', UserSubscriptionStatus.RESERVED, 10, 0, 1);
+    const h = harness([first, next]);
+    await h.service.deductSms(100, 1);
+    expect(first.status).toBe(UserSubscriptionStatus.EXPIRED);
+    expect(next.status).toBe(UserSubscriptionStatus.ACTIVE);
+    expect(next.smsUsed).toBe(0);
   });
 });

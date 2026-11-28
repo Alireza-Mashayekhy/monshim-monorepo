@@ -38,11 +38,13 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export function AddressModal({ open, onOpenChange, user }: AddressModalProps) {
+  const provinceId = user?.provinceId ?? user?.province?.id;
+  const cityId = user?.cityId ?? user?.city?.id;
   const methods = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      provinceId: user?.provinceId ? String(user.provinceId) : '',
-      cityId: user?.cityId ? String(user.cityId) : '',
+      provinceId: provinceId ? String(provinceId) : '',
+      cityId: cityId ? String(cityId) : '',
     },
   });
 
@@ -53,11 +55,11 @@ export function AddressModal({ open, onOpenChange, user }: AddressModalProps) {
   useEffect(() => {
     if (open) {
       reset({
-        provinceId: user?.provinceId ? String(user.provinceId) : '',
-        cityId: user?.cityId ? String(user.cityId) : '',
+        provinceId: provinceId ? String(provinceId) : '',
+        cityId: cityId ? String(cityId) : '',
       });
     }
-  }, [open, user, reset]);
+  }, [open, provinceId, cityId, reset]);
 
   const selectedProvinceId = useWatch({
     control: methods.control,
@@ -99,11 +101,11 @@ export function AddressModal({ open, onOpenChange, user }: AddressModalProps) {
         provinceId: Number(data.provinceId),
         cityId: Number(data.cityId),
       });
-      toast.success('آدرس شما به‌روزرسانی شد.');
+      toast.success('استان و شهر شما به‌روزرسانی شد.');
       onOpenChange(false);
     } catch (error) {
       toast.error(
-        getApiErrorMessage(error, 'ذخیره آدرس انجام نشد. دوباره تلاش کنید.'),
+        getApiErrorMessage(error, 'ذخیره استان و شهر انجام نشد. دوباره تلاش کنید.'),
       );
     }
   };
@@ -118,7 +120,7 @@ export function AddressModal({ open, onOpenChange, user }: AddressModalProps) {
       <DialogContent className="max-w-sm rounded-3xl p-6">
         <DialogHeader className="flex flex-row justify-between items-center">
           <DialogTitle className="font-bold text-lg text-gray-800">
-            تغییر آدرس
+            انتخاب استان و شهر
           </DialogTitle>
         </DialogHeader>
 
@@ -151,7 +153,7 @@ export function AddressModal({ open, onOpenChange, user }: AddressModalProps) {
             className="w-full"
             loading={editUserMutation.isPending}
           >
-            ذخیره آدرس
+            ذخیره استان و شهر
           </Button>
         </FormProvider>
       </DialogContent>

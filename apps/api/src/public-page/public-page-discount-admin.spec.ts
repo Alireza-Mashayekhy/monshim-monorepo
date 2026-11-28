@@ -57,6 +57,8 @@ function createDiscountService(options?: { saveError?: Error }) {
     unused,
     { get: () => undefined } as never,
     unused,
+    unused, // planRepo — فقط برای استعلام/اعتبارسنجی کد تخفیف
+    unused, // discountUsageRepo — فقط برای سهمیهٔ استفاده
   );
 
   return { service, discountRepo, rows };
@@ -88,6 +90,117 @@ describe('مدیریت کدهای تخفیف صفحهٔ عمومی (پنل اد�
       isActive: true,
     });
     expect(rows).toHaveLength(1);
+  });
+
+  it('فیلدهای جدید (کاربرد، سقف استفاده، انقضا) هنگام ساخت ذخیره می‌شوند', async () => {
+    const { service, rows } = createDiscountService();
+
+    const created = await service.createDiscountCode({
+      code: 'SAVE25',
+      percentOff: 25,
+      applicableTo: 'BOTH',
+      maxTotalUses: 10,
+      maxUsesPerUser: 1,
+      expiresAt: '2027-06-01T00:00:00.000Z',
+    });
+
+    expect(created).toMatchObject({
+      code: 'SAVE25',
+      percentOff: 25,
+      isActive: true,
+      applicableTo: 'BOTH',
+      maxTotalUses: 10,
+      maxUsesPerUser: 1,
+      usedCount: 0,
+    });
+    expect(created.expiresAt).toBeInstanceOf(Date);
+    expect(rows).toHaveLength(1);
+
+    // بدون فیلتر، پیش‌فرض‌ها رفتار کدهای قدیمی را نگه می‌دارند.
+    const legacy = await service.createDiscountCode({
+      code: 'LEGACY10',
+      percentOff: 10,
+    });
+    expect(legacy).toMatchObject({
+      applicableTo: 'PUBLIC_PAGE',
+      maxTotalUses: null,
+      maxUsesPerUser: null,
+      expiresAt: null,
+    });
+  });
+
+  it('سقف‌ها و انقضا با مقدار null در ویرایش پاک می‌شوند', async () => {
+    const { service } = createDiscountService();
+    const created = await service.createDiscountCode({
+      code: 'SAVE25',
+      percentOff: 25,
+      applicableTo: 'SUBSCRIPTION',
+      maxTotalUses: 10,
+      maxUsesPerUser: 1,
+      expiresAt: '2027-06-01T00:00:00.000Z',
+    });
+
+    await expect(
+      service.updateDiscountCode(created.id, {
+        applicableTo: 'PUBLIC_PAGE',
+        maxTotalUses: null,
+        maxUsesPerUser: null,
+        expiresAt: null,
+      }),
+    ).resolves.toMatchObject({
+      applicableTo: 'PUBLIC_PAGE',
+      maxTotalUses: null,
+      maxUsesPerUser: null,
+      expiresAt: null,
+    });
+  });
+
+  it('stores Tehran day boundaries and validates partial updates against persisted dates', async () => {
+    const { service, discountRepo } = createDiscountService();
+    const created = await service.createDiscountCode({
+      code: 'RANGE',
+      percentOff: 37,
+      startsAt: '2027-03-21',
+      expiresAt: '2027-03-21',
+    });
+    expect(created.startsAt?.toISOString()).toBe('2027-03-20T20:30:00.000Z');
+    expect(created.expiresAt?.toISOString()).toBe('2027-03-21T20:29:59.000Z');
+    const saves = discountRepo.save.mock.calls.length;
+    await expect(
+      service.updateDiscountCode(created.id, { startsAt: '2027-03-22' }),
+    ).rejects.toThrow('تاریخ پایان اعتبار باید بعد از تاریخ شروع باشد');
+    await expect(
+      service.updateDiscountCode(created.id, { expiresAt: '2027-03-20' }),
+    ).rejects.toThrow('تاریخ پایان اعتبار باید بعد از تاریخ شروع باشد');
+    expect(discountRepo.save).toHaveBeenCalledTimes(saves);
+    await expect(
+      service.updateDiscountCode(created.id, {
+        startsAt: null,
+        expiresAt: null,
+        percentOff: 100,
+      }),
+    ).resolves.toMatchObject({
+      startsAt: null,
+      expiresAt: null,
+      percentOff: 100,
+    });
+  });
+
+  it('rejects inverted/equal instants and invalid dates on creation', async () => {
+    const { service } = createDiscountService();
+    for (const dates of [
+      { startsAt: '2027-01-01T00:00:00Z', expiresAt: '2027-01-01T00:00:00Z' },
+      { startsAt: '2027-01-03', expiresAt: '2027-01-01' },
+      { startsAt: '2027-02-30', expiresAt: null },
+    ]) {
+      await expect(
+        service.createDiscountCode({
+          code: 'BADDATE',
+          percentOff: 1,
+          ...dates,
+        }),
+      ).rejects.toThrow();
+    }
   });
 
   it('کد تکراری را پیش از نوشتن با ۴۰۹ رد می‌کند (نه خطای ۵۰۰)', async () => {

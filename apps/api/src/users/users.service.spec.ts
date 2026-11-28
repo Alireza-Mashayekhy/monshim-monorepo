@@ -76,3 +76,42 @@ describe('UsersService.remove — پاک‌سازی رکوردهای باشگا�
     expect(userTxRepo.delete).not.toHaveBeenCalled();
   });
 });
+
+describe('UsersService — موقعیت کاربر جاری', () => {
+  it('findOne که توسط auth/me استفاده می‌شود شناسه‌ها و روابط شهر و استان را برمی‌گرداند', async () => {
+    const user = {
+      id: 42,
+      cityId: 12,
+      provinceId: 1,
+      city: { id: 12, name: 'تهران' },
+      province: { id: 1, name: 'تهران' },
+    };
+    const repository = { findOne: jest.fn().mockResolvedValue(user) };
+    const service = new UsersService(repository as never);
+
+    await expect(service.findOne(42)).resolves.toEqual(user);
+    expect(repository.findOne).toHaveBeenCalledWith({
+      where: { id: 42 },
+      relations: { city: true, province: true },
+    });
+  });
+
+  it('findMe نیز روابط مکان را همراه پروفایل برمی‌گرداند', async () => {
+    const user = {
+      id: 42,
+      cityId: 12,
+      provinceId: 1,
+      city: { id: 12, name: 'تهران' },
+      province: { id: 1, name: 'تهران' },
+      barberProfile: null,
+    };
+    const repository = { findOne: jest.fn().mockResolvedValue(user) };
+    const service = new UsersService(repository as never);
+
+    await expect(service.findMe(42)).resolves.toEqual(user);
+    expect(repository.findOne).toHaveBeenCalledWith({
+      where: { id: 42 },
+      relations: { city: true, province: true, barberProfile: true },
+    });
+  });
+});

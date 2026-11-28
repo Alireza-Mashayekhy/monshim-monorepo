@@ -322,6 +322,10 @@ export class AuthService {
               createdUser.id,
               manager,
             );
+          await this.userSubscriptionService.grantFreeSmsTrial(
+            createdUser.id,
+            manager,
+          );
 
           return {
             user: createdUser,

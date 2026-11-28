@@ -26,6 +26,7 @@ import {
   type CallbackUrlValue,
   PROVIDER_WELCOME_PATH,
 } from '@/lib/auth';
+import { formatBirthDate } from '@/lib/birth-date';
 import { jalaliToIso } from '@/lib/date-utils';
 import { stripNumericSeparators, toEnglishDigits } from '@/lib/digits';
 import {
@@ -431,7 +432,9 @@ export default function BarbaerStep5({
             </div>
             <div className="flex justify-between items-start gap-2">
               <span className="text-gray-500 shrink-0">تاریخ تولد</span>
-              <span className="font-medium text-left">{birthDate || '—'}</span>
+              <span className="font-medium text-left">
+                {formatBirthDate(birthDate) || '—'}
+              </span>
             </div>
           </div>
         </div>

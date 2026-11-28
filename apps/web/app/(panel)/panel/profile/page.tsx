@@ -15,8 +15,8 @@ import {
   UserRound,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
 import { toast } from 'sonner';
 
 import { AddressModal } from '@/components/pages/profile/address-modal';
@@ -122,6 +122,21 @@ function RowAction({
 }
 
 export default function ProfilePage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          className="m-4 h-48 animate-pulse rounded-2xl bg-gray-100"
+          aria-label="در حال بارگذاری پروفایل"
+        />
+      }
+    >
+      <ProfileContent />
+    </Suspense>
+  );
+}
+
+function ProfileContent() {
   const { data: user, isLoading } = useMe();
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPasswordModal, setPasswordModal] = useState(false);
@@ -130,6 +145,12 @@ export default function ProfilePage() {
 
   const logoutMutation = useLogout();
   const router = useRouter();
+  const editCity = useSearchParams().get('editCity') === '1';
+
+  const handleAddressOpenChange = (open: boolean) => {
+    setAddressModal(open);
+    if (!open && editCity) router.replace('/panel/profile');
+  };
 
   const logout = async () => {
     if (logoutMutation.isPending) return;
@@ -194,7 +215,7 @@ export default function ProfilePage() {
           />
           <RowAction
             icon={<MapPin size={15} />}
-            label="تغییر آدرس"
+            label="استان و شهر"
             value={addressValue || 'ثبت نشده'}
             onClick={() => setAddressModal(true)}
           />
@@ -271,8 +292,8 @@ export default function ProfilePage() {
         onOpenChange={setPasswordModal}
       />
       <AddressModal
-        open={showAddressModal}
-        onOpenChange={setAddressModal}
+        open={!isLoading && (showAddressModal || editCity)}
+        onOpenChange={handleAddressOpenChange}
         user={user?.data}
       />
 

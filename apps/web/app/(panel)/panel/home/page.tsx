@@ -26,17 +26,19 @@ import {
   useCancelBooking,
   useMyBookings,
 } from '@/services/features/booking/hooks';
-import { useLocationStore } from '@/store/useLocationStore';
 
 export default function Home() {
-  const { user, isLoading: userLoading } = useCurrentUser();
-  const locationStore = useLocationStore();
+  const {
+    user,
+    isLoading: userLoading,
+    isError: userError,
+    refetch: refetchUser,
+  } = useCurrentUser();
 
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
-  const effectiveCityId =
-    user?.cityId ?? user?.city?.id ?? locationStore.cityId ?? undefined;
-  const effectiveCityName = user?.city?.name || locationStore.cityName || '';
+  const profileCityId = user?.cityId ?? user?.city?.id ?? null;
+  const profileCityName = user?.city?.name ?? '';
   // تنها منبع منطق فیلتر جنسیت (مشترک با `/panel/explore`).
   const gender = resolveBarberGenderFilter(user);
 
@@ -45,13 +47,18 @@ export default function Home() {
     limit: 5,
   });
 
-  const { data: barbersData, isLoading: barbersLoading } = useHomeBarberList(
+  const {
+    data: barbersData,
+    isLoading: barbersLoading,
+    isError: barbersError,
+    refetch: refetchBarbers,
+  } = useHomeBarberList(
     {
-      cityId: effectiveCityId ? Number(effectiveCityId) : undefined,
+      cityId: Number(profileCityId),
       gender,
       limit: 6,
     },
-    { enabled: !userLoading },
+    { enabled: !userLoading && !userError && Boolean(profileCityId) },
   );
 
   const cancelMutation = useCancelBooking();
@@ -90,12 +97,20 @@ export default function Home() {
                 <span className="text-xs text-gray-500 font-medium">
                   سلام، {displayName}
                 </span>
-                {effectiveCityName && (
-                  <span className="inline-flex items-center gap-0.5 text-[10px] text-primary bg-primary-2 px-1.5 py-0.5 rounded-md border border-primary/20 hover:bg-primary/20 transition-colors">
+                {profileCityName ? (
+                  <span className="inline-flex items-center gap-0.5 text-[10px] text-primary bg-primary-2 px-1.5 py-0.5 rounded-md border border-primary/20">
                     <MapPin size={10} />
-                    <span>{effectiveCityName}</span>
+                    <span>{profileCityName}</span>
                   </span>
-                )}
+                ) : !userLoading && !userError && !profileCityId ? (
+                  <Link
+                    href="/panel/profile?editCity=1"
+                    className="inline-flex items-center gap-0.5 text-[10px] text-primary bg-primary-2 px-1.5 py-0.5 rounded-md border border-primary/20 hover:bg-primary/20 transition-colors"
+                  >
+                    <MapPin size={10} />
+                    + ثبت شهر
+                  </Link>
+                ) : null}
               </div>
               <h1 className="text-sm sm:text-base font-black text-gray-900 tracking-tight">
                 روز خوبی داشته باشید
@@ -230,9 +245,9 @@ export default function Home() {
               <h2 className="text-sm sm:text-base font-black text-gray-900">
                 آرایشگاه‌های شهر شما
               </h2>
-              {effectiveCityName && (
+              {profileCityName && (
                 <span className="text-[11px] font-bold text-primary bg-primary-2 px-2 py-0.5 rounded-lg border border-primary/20">
-                  {effectiveCityName}
+                  {profileCityName}
                 </span>
               )}
             </div>
@@ -244,26 +259,68 @@ export default function Home() {
             </Link>
           </div>
 
-          {/* Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {barbersLoading
-              ? // بارگذاری اسکلتون
-                Array.from({ length: 2 }).map((_, i) => (
-                  <BarberCardSkeleton key={i} variant="square" />
-                ))
-              : barbersData?.data &&
-                barbersData.data.length > 0 &&
-                // داده‌های واقعی از دیتابیس
-                barbersData.data.slice(0, 4).map(barber => {
-                  return (
-                    <BarberCard
-                      variant="square"
-                      key={barber.id ?? barber.salonName}
-                      barber={barber}
-                    />
-                  );
-                })}
-          </div>
+          {userLoading || (profileCityId && barbersLoading) ? (
+            <div
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+              aria-label="در حال بارگذاری آرایشگاه‌ها"
+            >
+              {Array.from({ length: 2 }).map((_, i) => (
+                <BarberCardSkeleton key={i} variant="square" />
+              ))}
+            </div>
+          ) : userError ? (
+            <div className="bg-white rounded-2xl border border-border shadow-xs p-5 text-center space-y-3">
+              <p className="text-sm text-gray-700">
+                دریافت اطلاعات پروفایل انجام نشد.
+              </p>
+              <Button variant="outline" onClick={() => void refetchUser()}>
+                تلاش دوباره
+              </Button>
+            </div>
+          ) : !profileCityId ? (
+            <div className="bg-white rounded-2xl border border-primary/30 shadow-xs p-5 text-center space-y-3">
+              <MapPin className="mx-auto text-primary" size={24} />
+              <p className="text-sm font-bold text-gray-800">
+                هنوز شهر خود را انتخاب نکرده‌اید
+              </p>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                برای اینکه آرایشگاه‌های شهر خودتان را اینجا ببینید، استان و شهر
+                خود را در پروفایل ثبت کنید.
+              </p>
+              <Button asChild>
+                <Link href="/panel/profile?editCity=1">
+                  انتخاب و ثبت شهر در پروفایل
+                </Link>
+              </Button>
+            </div>
+          ) : barbersError ? (
+            <div className="bg-white rounded-2xl border border-border shadow-xs p-5 text-center space-y-3">
+              <p className="text-sm text-gray-700">دریافت آرایشگاه‌ها انجام نشد.</p>
+              <Button variant="outline" onClick={() => void refetchBarbers()}>
+                تلاش دوباره
+              </Button>
+            </div>
+          ) : !barbersData?.data?.length ? (
+            <div className="bg-white rounded-2xl border border-border shadow-xs p-5 text-center space-y-3">
+              <p className="text-sm text-gray-700">
+                در حال حاضر آرایشگاه فعالی در {profileCityName || 'شهر شما'} ثبت
+                نشده است.
+              </p>
+              <Button asChild variant="outline">
+                <Link href="/panel/explore">مشاهده همه سالن‌ها</Link>
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {barbersData.data.slice(0, 4).map(barber => (
+                <BarberCard
+                  variant="square"
+                  key={barber.id ?? barber.salonName}
+                  barber={barber}
+                />
+              ))}
+            </div>
+          )}
         </section>
       </div>
 

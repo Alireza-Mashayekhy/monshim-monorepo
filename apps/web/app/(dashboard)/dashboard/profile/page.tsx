@@ -10,6 +10,7 @@ import {
   KeyRound,
   LogOut,
   Pencil,
+  Phone,
   Share2,
   ShieldCheck,
   Store,
@@ -26,6 +27,7 @@ import * as z from 'zod';
 
 import DashboardShell from '@/components/dashboard/layout/dashboard-shell';
 import { BasicInfoDrawer } from '@/components/dashboard/profile/basic-info-drawer';
+import { ContactInfoDrawer } from '@/components/dashboard/profile/contact-info-drawer';
 import PortfolioManager from '@/components/dashboard/profile/portfolio-manager';
 import { SalonInfoDrawer } from '@/components/dashboard/profile/salon-info-drawer';
 import { ChangePasswordModal } from '@/components/pages/profile/change-password-modal';
@@ -93,6 +95,7 @@ export default function ProfilePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [basicInfoDrawerOpen, setBasicInfoDrawerOpen] = useState(false);
   const [salonInfoDrawerOpen, setSalonInfoDrawerOpen] = useState(false);
+  const [contactInfoDrawerOpen, setContactInfoDrawerOpen] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const logoutMutation = useLogout();
   const router = useRouter();
@@ -460,6 +463,62 @@ export default function ProfilePage() {
               />
             </div>
           </AppCard>
+          <AppCard>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                <Phone size={18} className="text-primary-600" />
+                راه‌های ارتباطی و مسیریابی
+              </h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setContactInfoDrawerOpen(true)}
+                className="gap-1"
+              >
+                <Pencil size={14} />
+                ویرایش
+              </Button>
+            </div>
+            <div className="space-y-3">
+              <InfoRow
+                label="شماره تماس سالن"
+                value={profile?.data?.contactPhone || 'ثبت نشده'}
+              />
+              <InfoRow
+                label="واتساپ"
+                value={profile?.data?.whatsapp || 'ثبت نشده'}
+              />
+              <InfoRow
+                label="اینستاگرام"
+                value={
+                  profile?.data?.instagram
+                    ? `@${profile.data.instagram}`
+                    : 'ثبت نشده'
+                }
+              />
+              <InfoRow
+                label="تلگرام"
+                value={
+                  profile?.data?.telegram
+                    ? `@${profile.data.telegram}`
+                    : 'ثبت نشده'
+                }
+              />
+              <InfoRow
+                label="موقعیت مکانی"
+                value={
+                  typeof profile?.data?.latitude === 'number' &&
+                  typeof profile?.data?.longitude === 'number'
+                    ? `ثبت شده (${toPersianDigits(
+                        profile.data.latitude.toFixed(5),
+                      )}، ${toPersianDigits(
+                        profile.data.longitude.toFixed(5),
+                      )})`
+                    : 'ثبت نشده'
+                }
+              />
+            </div>
+          </AppCard>
           <PortfolioManager images={profile?.data?.portfolioImages} />
           <AppCard>
             <div className="flex justify-between items-center mb-2">
@@ -728,6 +787,10 @@ export default function ProfilePage() {
       <SalonInfoDrawer
         open={salonInfoDrawerOpen}
         onOpenChange={setSalonInfoDrawerOpen}
+      />
+      <ContactInfoDrawer
+        open={contactInfoDrawerOpen}
+        onOpenChange={setContactInfoDrawerOpen}
       />
       <ChangePasswordModal
         open={showPasswordModal}

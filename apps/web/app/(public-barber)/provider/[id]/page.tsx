@@ -1,11 +1,17 @@
 import {
   ArrowLeft,
   CalendarCheck,
+  Camera,
+  Car,
   Clock,
   Images,
   MapPin,
+  MessageCircle,
   MessageSquareHeart,
+  Navigation,
+  Phone,
   Scissors,
+  Send,
   Sparkles,
   Star,
 } from 'lucide-react';
@@ -20,9 +26,17 @@ import BookingGate, {
 } from '@/components/public-barber/booking-gate';
 import PortfolioGallery from '@/components/public-barber/portfolio-gallery';
 import ProfileViewTracker from '@/components/public-barber/profile-view-tracker';
+import { PublicReviewAction } from '@/components/public-barber/public-review-action';
 import PublicReviews from '@/components/public-barber/public-reviews';
 import ShareButton from '@/components/public-barber/share-button';
 import { getActivityTypeLabel } from '@/constants/activity-types';
+import {
+  buildGoogleMapsDirectionsUrl,
+  buildInstagramUrl,
+  buildSnappRideUrl,
+  buildTelegramUrl,
+  buildWhatsAppUrl,
+} from '@/lib/contact-links';
 import { publicImageUrl } from '@/lib/images';
 import { shouldIndexProfile } from '@/lib/profile-quality';
 import { absolutePublicImageUrl, fetchPublicApi } from '@/lib/public-api';
@@ -32,6 +46,7 @@ import {
 } from '@/lib/public-page-slug';
 import { buildPageMetadata } from '@/lib/seo';
 import { siteConfig } from '@/lib/site-config';
+import { toCallHref } from '@/lib/tel';
 import { toPersianDigits } from '@/lib/utils';
 import type { ApiListResponse } from '@/services/api/types';
 import type { BarberReview } from '@/services/features/barber/types';
@@ -43,9 +58,11 @@ import type { PublicBarberProfile } from '@/services/features/public-page/types'
  * این صفحه بدون هدر و فوتر عمومی سایت و با بردکرامب نمایش داده می‌شود:
  * ۱. تصویر مربعی ۱:۱ با نام آرایشگاه روی بخش پایینی عکس (بلور + گرادیانت خوانا)
  * ۲. درباره آرایشگاه و نشانی
+ * ۲.۵ راه‌های ارتباطی (تماس/اینستاگرام/واتساپ/تلگرام — فقط در صورت ثبت)
  * ۳. اسلایدر ۳تایی خودکار نمونه‌کارها با بزرگ‌نمایی آیتم وسط
  * ۴. نوار تک‌خطی متحرک و آرام نظرات مشتریان
  * ۵. فهرست خدمات و قیمت‌ها + دکمهٔ شناور رزرو آنلاین نوبت
+ * ۶. نشانی و مسیریابی (گوگل‌مپ/اسنپ — پایین صفحه، بالاتر از نوار شناور)
  */
 export const revalidate = 300;
 
@@ -197,6 +214,30 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
   const rating = Number(barber.rating ?? 0);
   const reviewCount = Number(barber.reviewCount ?? 0);
 
+  // راه‌های ارتباطی و مسیریابی — فقط مقادیر واقعیِ ثبت‌شده؛ برای فیلد
+  // خالی نه دکمهٔ غیرفعال ساخته می‌شود و نه لینک جعلی در JSON-LD.
+  const contactPhoneHref = toCallHref(barber.contactPhone);
+  const instagramUrl = buildInstagramUrl(barber.instagram);
+  const whatsappUrl = buildWhatsAppUrl(barber.whatsapp);
+  const telegramUrl = buildTelegramUrl(barber.telegram);
+  const hasAnyContact = Boolean(
+    contactPhoneHref || instagramUrl || whatsappUrl || telegramUrl,
+  );
+
+  const fullAddress = [barber.address, location].filter(Boolean).join('، ');
+  const hasCoordinates =
+    typeof barber.latitude === 'number' && typeof barber.longitude === 'number';
+  const googleMapsUrl = buildGoogleMapsDirectionsUrl({
+    latitude: barber.latitude,
+    longitude: barber.longitude,
+    address: fullAddress,
+  });
+  const snappUrl = buildSnappRideUrl({
+    latitude: barber.latitude,
+    longitude: barber.longitude,
+  });
+  const sameAs = [instagramUrl, telegramUrl].filter(Boolean);
+
   const offers = barber.services.map(service => ({
     '@type': 'Offer',
     name: service.name,
@@ -267,6 +308,18 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
       '@id': `${profileUrl}#business`,
       name: barber.salonName,
       url: profileUrl,
+      // فقط مقادیر واقعیِ ثبت‌شده؛ telephone/geo/sameAs هرگز ساخته نمی‌شوند.
+      ...(barber.contactPhone ? { telephone: barber.contactPhone } : {}),
+      ...(hasCoordinates
+        ? {
+            geo: {
+              '@type': 'GeoCoordinates',
+              latitude: barber.latitude,
+              longitude: barber.longitude,
+            },
+          }
+        : {}),
+      ...(sameAs.length > 0 ? { sameAs } : {}),
       ...(schemaImages.length > 0 ? { image: schemaImages } : {}),
       ...(priceRange ? { priceRange } : {}),
       description: profileDescription(barber),
@@ -345,7 +398,7 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
         hasReviews={reviewCount > 0}
       />
 
-      <div className="mx-auto w-full max-w-2xl px-4 pb-28 pt-2 sm:px-6">
+      <div className="mx-auto w-full max-w-2xl px-4 pb-32 pt-2 sm:px-6">
         {/* بردکرامب بالای صفحه (بدون هدر و فوتر عمومی) */}
         <div className="[&>nav]:px-1 [&>nav]:py-4">
           <Breadcrumbs
@@ -476,6 +529,72 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
             )}
           </section>
 
+          {/* راه‌های ارتباطی — فقط وقتی حداقل یکی ثبت شده باشد (بدون دکمهٔ خالی/غیرفعال) */}
+          {hasAnyContact && (
+            <section
+              aria-labelledby="contact-heading"
+              className="rounded-[28px] border border-primary/15 bg-white p-5 shadow-xs sm:p-6"
+            >
+              <h2
+                id="contact-heading"
+                className="flex items-center gap-2 text-base font-black text-gray-900 sm:text-lg"
+              >
+                <Phone size={18} className="text-primary" />
+                راه‌های ارتباطی
+              </h2>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {contactPhoneHref && (
+                  <a
+                    href={contactPhoneHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-primary/15 bg-primary-3 px-4 text-sm font-black text-gray-900 transition hover:border-primary/40 hover:bg-primary-2 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/40"
+                  >
+                    <Phone size={17} className="text-primary" />
+                    تماس با سالن
+                  </a>
+                )}
+
+                {instagramUrl && (
+                  <a
+                    href={instagramUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-primary/15 bg-primary-3 px-4 text-sm font-black text-gray-900 transition hover:border-primary/40 hover:bg-primary-2 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/40"
+                  >
+                    <Camera size={17} className="text-primary" />
+                    اینستاگرام
+                  </a>
+                )}
+
+                {whatsappUrl && (
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-primary/15 bg-primary-3 px-4 text-sm font-black text-gray-900 transition hover:border-primary/40 hover:bg-primary-2 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/40"
+                  >
+                    <MessageCircle size={17} className="text-primary" />
+                    واتساپ
+                  </a>
+                )}
+
+                {telegramUrl && (
+                  <a
+                    href={telegramUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-primary/15 bg-primary-3 px-4 text-sm font-black text-gray-900 transition hover:border-primary/40 hover:bg-primary-2 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/40"
+                  >
+                    <Send size={17} className="text-primary" />
+                    تلگرام
+                  </a>
+                )}
+              </div>
+            </section>
+          )}
+
           {/* ۳. اسلایدر ۳تایی خودکار نمونه‌کارها (آیتم وسط بزرگ‌تر) */}
           {barber.portfolio.length > 0 && (
             <section
@@ -521,6 +640,10 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
                 rating={rating}
                 reviewCount={reviewCount}
                 salonName={barber.salonName}
+              />
+              <PublicReviewAction
+                barberId={barber.id}
+                barberName={barber.salonName}
               />
             </div>
           </section>
@@ -598,6 +721,54 @@ export default async function PublicBarberPage({ params }: BarberPageProps) {
                   );
                 })}
               </ul>
+            </section>
+          )}
+
+          {/* نشانی و مسیریابی — پایین‌ترین بخش صفحه، با فاصلهٔ کافی از نوار شناور رزرو */}
+          {(fullAddress || googleMapsUrl || snappUrl) && (
+            <section
+              aria-labelledby="directions-heading"
+              className="rounded-[28px] border border-primary/15 bg-white p-5 shadow-xs sm:p-6"
+            >
+              <h2
+                id="directions-heading"
+                className="flex items-center gap-2 text-base font-black text-gray-900 sm:text-lg"
+              >
+                <MapPin size={18} className="text-primary" />
+                نشانی و مسیریابی
+              </h2>
+
+              {fullAddress && (
+                <p className="mt-3 text-sm leading-7 text-gray-700">
+                  {fullAddress}
+                </p>
+              )}
+
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                {googleMapsUrl && (
+                  <a
+                    href={googleMapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-black text-white shadow-lg shadow-primary/15 transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/40"
+                  >
+                    <Navigation size={17} />
+                    مسیریابی با گوگل‌مپ
+                  </a>
+                )}
+
+                {snappUrl && (
+                  <a
+                    href={snappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl border border-primary/15 bg-primary-3 px-4 text-sm font-black text-gray-900 transition hover:border-primary/40 hover:bg-primary-2 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/40"
+                  >
+                    <Car size={17} className="text-primary" />
+                    درخواست و مسیریابی با اسنپ
+                  </a>
+                )}
+              </div>
             </section>
           )}
         </article>

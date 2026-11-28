@@ -87,8 +87,8 @@ export function TicketFilters({
               className={cn(
                 'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
                 status === item.value
-                  ? 'bg-primary-600 border-primary-600 text-white'
-                  : 'bg-white border-gray-200 text-gray-500 hover:border-primary-200 hover:text-primary-700',
+                  ? 'bg-primary border-primary text-white'
+                  : 'bg-white border-gray-200 text-gray-500 hover:border-primary/40 hover:text-primary',
               )}
             >
               {item.label}

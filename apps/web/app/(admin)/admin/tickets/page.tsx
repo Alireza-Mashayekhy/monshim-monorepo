@@ -49,7 +49,7 @@ export default function AdminTicketsPage() {
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Headphones size={18} className="text-primary-600" />
+            <Headphones size={18} className="text-primary" />
             <h1 className="font-bold text-gray-800">تیکت‌های پشتیبانی</h1>
           </div>
           <span className="text-xs text-gray-400">
@@ -110,8 +110,8 @@ export default function AdminTicketsPage() {
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-6">
-            <div className="size-14 rounded-full bg-primary-50 flex items-center justify-center">
-              <Headphones size={26} className="text-primary-600" />
+            <div className="size-14 rounded-full bg-primary-2 flex items-center justify-center">
+              <Headphones size={26} className="text-primary" />
             </div>
             <p className="text-sm font-semibold text-gray-700">
               یک تیکت را انتخاب کنید

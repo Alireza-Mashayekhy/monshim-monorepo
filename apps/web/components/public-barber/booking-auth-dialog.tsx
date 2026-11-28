@@ -37,11 +37,13 @@ export default function BookingAuthDialog({
   onOpenChange,
   salonName,
   onComplete,
+  purpose = 'booking',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   salonName: string;
   onComplete: () => void;
+  purpose?: 'booking' | 'review';
 }) {
   const [step, setStep] = useState<Step>('phone');
   const [phone, setPhone] = useState('');
@@ -230,17 +232,23 @@ export default function BookingAuthDialog({
           </div>
           <DialogTitle className="text-xl font-black text-gray-900">
             {step === 'phone'
-              ? 'ورود برای رزرو نوبت'
+              ? purpose === 'review'
+                ? 'ورود برای ثبت نظر'
+                : 'ورود برای رزرو نوبت'
               : step === 'code'
                 ? 'کد تأیید را وارد کنید'
                 : 'تکمیل اطلاعات حساب'}
           </DialogTitle>
           <DialogDescription className="mt-1 leading-6 text-gray-500">
             {step === 'phone'
-              ? `برای ادامه رزرو در ${salonName}، شماره موبایل خود را وارد کنید.`
+              ? purpose === 'review'
+                ? `برای بررسی امکان ثبت نظر درباره ${salonName}، شماره موبایل خود را وارد کنید.`
+                : `برای ادامه رزرو در ${salonName}، شماره موبایل خود را وارد کنید.`
               : step === 'code'
                 ? `کد چهاررقمی ارسال‌شده به ${toPersianDigits(phone)} را وارد کنید.`
-                : 'برای ساخت حساب و ادامه رزرو، اطلاعات خود را تکمیل کنید.'}
+                : purpose === 'review'
+                  ? 'برای ساخت حساب و بررسی امکان ثبت نظر، اطلاعات خود را تکمیل کنید.'
+                  : 'برای ساخت حساب و ادامه رزرو، اطلاعات خود را تکمیل کنید.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -354,7 +362,9 @@ export default function BookingAuthDialog({
               loading={working}
               className="h-12 w-full rounded-xl font-bold"
             >
-              تأیید و ادامه رزرو
+              {purpose === 'review'
+                ? 'تأیید و ادامه ثبت نظر'
+                : 'تأیید و ادامه رزرو'}
             </Button>
           </form>
         )}
@@ -452,7 +462,9 @@ export default function BookingAuthDialog({
               loading={working}
               className="h-12 w-full rounded-xl font-bold"
             >
-              ثبت‌نام و ادامه رزرو
+              {purpose === 'review'
+                ? 'ثبت‌نام و ادامه ثبت نظر'
+                : 'ثبت‌نام و ادامه رزرو'}
             </Button>
             <button
               type="button"

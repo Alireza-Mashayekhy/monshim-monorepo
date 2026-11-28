@@ -83,11 +83,23 @@ export class PublicPageController {
     return this.publicPageService.getPublicPagePlans();
   }
 
+  /**
+   * استعلام/اعتبارسنجی کد تخفیف برای یک پلنِ مشخص.
+   *
+   * فقط `code`/`target`/`planId` از کلاینت می‌آید؛ قیمتِ واقعیِ پلن، مبلغ
+   * تخفیف و شرط‌های سقف استفاده همگی در بک‌اند (از دیتابیس) محاسبه می‌شوند.
+   * کاربر هم از JWT خوانده می‌شود تا «سقف هر کاربر» درست سنجیده شود.
+   */
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.Barber, Role.Admin)
   @Post('discount/quote')
-  quoteDiscount(@Body() dto: ValidatePublicPageDiscountDto) {
-    return this.publicPageService.getDiscountQuote(dto.code);
+  quoteDiscount(@Req() req: any, @Body() dto: ValidatePublicPageDiscountDto) {
+    return this.publicPageService.getDiscountQuote({
+      userId: req.user.id,
+      code: dto.code,
+      target: dto.target,
+      planId: dto.planId,
+    });
   }
 
   @UseGuards(AuthGuard, RolesGuard)

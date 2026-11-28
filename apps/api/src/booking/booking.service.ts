@@ -1237,11 +1237,8 @@ export class BookingsService {
         );
       }
 
-      if (smsAvailability.remaining < requiredSmsCredits) {
-        throw new BadRequestException(
-          `اعتبار پیامک کافی نیست (پیامک باقی‌مانده: ${smsAvailability.remaining})`,
-        );
-      }
+      // The authoritative transactional deduction also includes queued plans;
+      // checking only the current balance here would incorrectly reject a split debit.
     }
 
     // اگر کد به اینجا رسیده باشد، اعتبار لازم موجود است (یا پیامکی لازم نیست).
@@ -1445,9 +1442,8 @@ export class BookingsService {
 
       /**
        * کسر اتمیک سهمیهٔ پیامک **درون تراکنش**: اگر درج نوبت‌ها شکست بخورد،
-       * رول‌بک کسر سهمیه را هم برمی‌گرداند؛ پس ثبتِ ناموفق هرگز اعتباری هدر
-       * نمی‌دهد. شرط `sms_used + count <= sms_total` در خود UPDATE هم مانع
-       * کسر بیش از سهمیه حتی در درخواست هم‌زمان است.
+       * رول‌بک کسر سهمیه را هم برمی‌گرداند؛ قفل کاربر درخواست‌های هم‌زمان
+       * برای خرید، ارتقا و مصرف سهمیه را سریالی می‌کند.
        */
       if (smsCost > 0) {
         await this.userSubscriptionService.deductSms(
