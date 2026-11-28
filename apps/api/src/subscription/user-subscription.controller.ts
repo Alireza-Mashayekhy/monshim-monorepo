@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthGuard } from 'src/common/guards/auth.guard';
 
+import { summarizeSmsSubscriptions } from './sms-subscription-summary';
 import { UserSubscriptionService } from './user-subscription.service';
 
 @Controller('user-subscriptions')
@@ -12,8 +13,13 @@ export class UserSubscriptionController {
   ) {}
 
   @Get('current')
-  getCurrent(@Req() req) {
-    return this.userSubscriptionService.getCurrent(req.user.id);
+  async getCurrent(@Req() req) {
+    const current = await this.userSubscriptionService.getCurrent(req.user.id);
+    if (!current) return null;
+    return {
+      ...current,
+      isFreeTrial: summarizeSmsSubscriptions([current])?.isFreeTrial ?? false,
+    };
   }
 
   @Get('sms-usage')

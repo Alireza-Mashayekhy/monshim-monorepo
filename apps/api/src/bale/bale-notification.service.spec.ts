@@ -275,6 +275,7 @@ describe('BaleNotificationService', () => {
         { createReferral: jest.fn() } as any,
         {
           grantFreePublicPageTrial: jest.fn().mockResolvedValue(null),
+          grantFreeSmsTrial: jest.fn().mockResolvedValue(null),
           claimFreeTrialSms: jest.fn().mockResolvedValue(false),
         } as any,
         { transaction: transactionMock } as any,

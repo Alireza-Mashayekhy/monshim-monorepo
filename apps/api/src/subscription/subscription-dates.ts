@@ -59,6 +59,10 @@ export function addPlanDuration(
   if (planType === 'public_page' && durationDays % 30 === 0) {
     return addCalendarMonths(date, durationDays / 30);
   }
+  if (planType === 'sms') {
+    // An SMS term is full 24-hour days, regardless of the server timezone/DST.
+    return new Date(date.getTime() + durationDays * 86_400_000);
+  }
 
   return addDays(date, durationDays);
 }

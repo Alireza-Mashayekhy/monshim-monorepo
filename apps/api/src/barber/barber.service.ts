@@ -20,17 +20,23 @@ import { isRuntimeFlagEnabled } from 'src/common/config/runtime-flags';
 import { getPagination, QueryDto } from 'src/common/database/query';
 import { Role } from 'src/common/enum/role.enum';
 import { FrontendRevalidationService } from 'src/common/services/frontend-revalidation.service';
+import { isDuplicateEntryError } from 'src/common/utils/db-error.util';
 import {
   isValidIranianNationalCode,
   normalizeNationalCode,
   toEnglishDigits,
 } from 'src/common/utils/national-code.util';
+import {
+  DEFAULT_FRONT_ORIGIN,
+  resolvePublicOrigin,
+} from 'src/common/utils/public-url.util';
 import { FilesService } from 'src/files/files.service';
 import { City } from 'src/locations/entities/city.entity';
 import { Province } from 'src/locations/entities/province.entity';
 import { BookingSmsService } from 'src/notification/booking-sms.service';
 import { Payment } from 'src/payment/entities/payment.entity';
 import { BarberPublicPagePurchase } from 'src/public-page/entities/barber-public-page-purchase.entity';
+import { validatePublicPageSlug } from 'src/public-page/slug.util';
 import { Referral } from 'src/referral/entities/referral.entity';
 import { Service } from 'src/services/entities/service.entity';
 // نوع فقط برای annotation؛ import مرزی کلاس سرویس در این فایل باید حذف شود
@@ -84,6 +90,61 @@ export function normalizeGenderFilter(
   const normalized = value.trim().toLowerCase();
   return normalized === 'male' || normalized === 'female' ? normalized : null;
 }
+
+/**
+ * ستون‌های «راه‌های ارتباطی» و «موقعیت مکانی» پروفایل آرایشگر.
+ *
+ * همه nullable هستند تا رکوردهای موجود بدون این فیلدها سالم بمانند؛
+ * `onModuleInit` آن‌ها را idempotent می‌سازد و معادل production همان
+ * فایل `sql/barber-contact-location.sql` است. DDL همین‌جا و در فایل SQL
+ * باید هم‌شکل نگه داشته شود.
+ */
+export function managementPageAvailability(input: {
+  slug: string | null;
+  isAccountActive: boolean;
+  isApproved: boolean;
+  isPubliclyVisible: boolean;
+  hasActiveService: boolean;
+  subscriptionKnown: boolean;
+  hasActiveSubscription: boolean;
+}) {
+  if (!input.slug)
+    return { status: 'NOT_SETUP' as const, reason: 'NO_SLUG' as const };
+  if (!input.isAccountActive)
+    return { status: 'INACTIVE' as const, reason: 'ACCOUNT_INACTIVE' as const };
+  if (!input.isApproved)
+    return { status: 'INACTIVE' as const, reason: 'NOT_APPROVED' as const };
+  if (!input.isPubliclyVisible)
+    return { status: 'INACTIVE' as const, reason: 'HIDDEN' as const };
+  if (!input.hasActiveService)
+    return {
+      status: 'INACTIVE' as const,
+      reason: 'NO_ACTIVE_SERVICE' as const,
+    };
+  if (!input.subscriptionKnown)
+    return {
+      status: 'UNKNOWN' as const,
+      reason: 'SUBSCRIPTION_UNKNOWN' as const,
+    };
+  if (!input.hasActiveSubscription)
+    return {
+      status: 'INACTIVE' as const,
+      reason: 'NO_ACTIVE_SUBSCRIPTION' as const,
+    };
+  return { status: 'ACTIVE' as const, reason: null };
+}
+
+const CONTACT_LOCATION_COLUMNS: ReadonlyArray<{
+  name: string;
+  ddl: string;
+}> = [
+  { name: 'contact_phone', ddl: 'VARCHAR(20) NULL' },
+  { name: 'instagram', ddl: 'VARCHAR(100) NULL' },
+  { name: 'whatsapp', ddl: 'VARCHAR(30) NULL' },
+  { name: 'telegram', ddl: 'VARCHAR(100) NULL' },
+  { name: 'latitude', ddl: 'DECIMAL(10,7) NULL' },
+  { name: 'longitude', ddl: 'DECIMAL(10,7) NULL' },
+];
 
 @Injectable()
 export class BarberService implements OnModuleInit {
@@ -174,33 +235,60 @@ export class BarberService implements OnModuleInit {
       }
       visibilityColumnReady = true;
 
-      if (!existing.has('pending_changes')) {
-        await this.profileRepository.query(
-          `ALTER TABLE \`${tableName}\` ADD COLUMN \`pending_changes\` JSON NULL`,
+      // ستون‌های پیش‌نویس ویرایش و lastmod سئو: بهترین تلاش (best-effort)؛
+      // نبود دسترسی ALTER فقط warn می‌دهد و سرویس را پایین نمی‌آورد.
+      try {
+        if (!existing.has('pending_changes')) {
+          await this.profileRepository.query(
+            `ALTER TABLE \`${tableName}\` ADD COLUMN \`pending_changes\` JSON NULL`,
+          );
+        }
+
+        if (!existing.has('pending_status')) {
+          await this.profileRepository.query(
+            `ALTER TABLE \`${tableName}\` ADD COLUMN \`pending_status\` VARCHAR(20) NOT NULL DEFAULT 'none'`,
+          );
+        }
+
+        if (!existing.has('pending_rejection_reason')) {
+          await this.profileRepository.query(
+            `ALTER TABLE \`${tableName}\` ADD COLUMN \`pending_rejection_reason\` TEXT NULL`,
+          );
+        }
+
+        // `lastmod` سئو: تاریخ آخرین تغییر محتوای پروفایل (نه تاریخ رزروها).
+        // فایل sql/barber-profile-updated-at.sql معادل productionِ همین کار است.
+        if (!existing.has('updated_at')) {
+          await this.profileRepository.query(
+            `ALTER TABLE \`${tableName}\` ADD COLUMN \`updated_at\` DATETIME(6) NULL`,
+          );
+          await this.profileRepository.query(
+            `UPDATE \`${tableName}\` SET \`updated_at\` = \`created_at\` WHERE \`updated_at\` IS NULL`,
+          );
+        }
+      } catch (error) {
+        this.logger.warn(
+          `بررسی/ایجاد ستون‌های pending پروفایل آرایشگر ناموفق بود: ${String(error)}`,
         );
       }
-
-      if (!existing.has('pending_status')) {
-        await this.profileRepository.query(
-          `ALTER TABLE \`${tableName}\` ADD COLUMN \`pending_status\` VARCHAR(20) NOT NULL DEFAULT 'none'`,
-        );
-      }
-
-      if (!existing.has('pending_rejection_reason')) {
-        await this.profileRepository.query(
-          `ALTER TABLE \`${tableName}\` ADD COLUMN \`pending_rejection_reason\` TEXT NULL`,
-        );
-      }
-
-      // `lastmod` سئو: تاریخ آخرین تغییر محتوای پروفایل (نه تاریخ رزروها).
-      // فایل sql/barber-profile-updated-at.sql معادل productionِ همین کار است.
-      if (!existing.has('updated_at')) {
-        await this.profileRepository.query(
-          `ALTER TABLE \`${tableName}\` ADD COLUMN \`updated_at\` DATETIME(6) NULL`,
-        );
-        await this.profileRepository.query(
-          `UPDATE \`${tableName}\` SET \`updated_at\` = \`created_at\` WHERE \`updated_at\` IS NULL`,
-        );
+      // راه‌های ارتباطی و موقعیت مکانی (contact_phone/instagram/whatsapp/
+      // telegram/latitude/longitude): برای خواندن و نوشتن پروفایل لازم‌اند
+      // (SELECT/UPDATE ستون‌های entity را می‌زند)، پس نبودشان مثل
+      // is_publicly_visible سرویس را پایین می‌آورد؛ راهنمای production فایل
+      // sql/barber-contact-location.sql است. ER_DUP_FIELDNAME برای چند
+      // instance همزمان نادیده گرفته می‌شود.
+      for (const column of CONTACT_LOCATION_COLUMNS) {
+        if (existing.has(column.name)) continue;
+        try {
+          await this.profileRepository.query(
+            `ALTER TABLE \`${tableName}\` ADD COLUMN \`${column.name}\` ${column.ddl}`,
+          );
+        } catch (error) {
+          const code =
+            (error as { code?: string; driverError?: { code?: string } })
+              ?.driverError?.code ?? (error as { code?: string })?.code;
+          if (code !== 'ER_DUP_FIELDNAME') throw error;
+        }
       }
     } catch (error) {
       if (!visibilityColumnReady) {
@@ -209,9 +297,10 @@ export class BarberService implements OnModuleInit {
         );
         throw error;
       }
-      this.logger.warn(
-        `بررسی/ایجاد ستون‌های pending پروفایل آرایشگر ناموفق بود: ${String(error)}`,
+      this.logger.error(
+        `ستون‌های راه‌های ارتباطی و موقعیت مکانی پروفایل آرایشگر آماده نیست؛ فایل sql/barber-contact-location.sql را اجرا کنید: ${String(error)}`,
       );
+      throw error;
     }
   }
 
@@ -658,6 +747,12 @@ export class BarberService implements OnModuleInit {
       .leftJoinAndSelect('user.barberProfile', 'profile')
       .leftJoinAndSelect('profile.city', 'city')
       .leftJoinAndSelect('profile.province', 'province')
+      .leftJoinAndSelect(
+        'user.services',
+        'activeServices',
+        'activeServices.isActive = :serviceActive',
+        { serviceActive: true },
+      )
       .where('user.roles LIKE :barberRole', { barberRole: '%Barber%' });
 
     if (query.search?.trim()) {
@@ -668,6 +763,7 @@ export class BarberService implements OnModuleInit {
             .where('user.fullName LIKE :search', { search })
             .orWhere('user.phone LIKE :search', { search })
             .orWhere('profile.salonName LIKE :search', { search })
+            .orWhere('profile.slug LIKE :search', { search })
             .orWhere('city.name LIKE :search', { search })
             .orWhere('province.name LIKE :search', { search });
         }),
@@ -685,6 +781,7 @@ export class BarberService implements OnModuleInit {
     // در صورت خطا، فهرست مدیریت همچنان نمایش داده می‌شود و فقط این ستون
     // خالی می‌ماند — وضعیت اشتراک هرگز نباید لیست را بشکند.
     let subscriptionByUser = new Map<number, PublicPageSubscriptionSummary>();
+    let subscriptionKnown = false;
     let smsSubscriptionByUser = new Map<number, SmsSubscriptionSummary>();
     if (this.userSubscriptionService && users.length > 0) {
       try {
@@ -693,6 +790,7 @@ export class BarberService implements OnModuleInit {
             users.map(user => user.id),
           );
         subscriptionByUser = summarizePublicPageSubscriptionsByUser(rows);
+        subscriptionKnown = true;
       } catch (error) {
         this.logger.warn(
           `خواندن وضعیت اشتراک پروفایل اختصاصی برای فهرست مدیریت ناموفق بود: ${
@@ -719,9 +817,31 @@ export class BarberService implements OnModuleInit {
       }
     }
 
+    const publicOrigin = resolvePublicOrigin({
+      configured: process.env.FRONT_URL,
+      fallback: DEFAULT_FRONT_ORIGIN,
+      isProduction: process.env.NODE_ENV === 'production',
+    }).origin;
+
     return {
       data: users.map(user => ({
         id: user.id,
+        barberProfileId: user.barberProfile?.id ?? null,
+        publicUrl: user.barberProfile?.slug
+          ? `${publicOrigin}/provider/${encodeURIComponent(user.barberProfile.slug)}`
+          : null,
+        publicPageAvailability: managementPageAvailability({
+          slug: user.barberProfile?.slug?.trim() || null,
+          isAccountActive: Boolean(user.isActive),
+          isApproved: Boolean(user.barberProfile?.isApproved),
+          isPubliclyVisible: Boolean(user.barberProfile?.isPubliclyVisible),
+          hasActiveService: Boolean(
+            user.services?.some(service => service.isActive),
+          ),
+          subscriptionKnown,
+          hasActiveSubscription:
+            subscriptionByUser.get(user.id)?.display === 'active',
+        }),
         fullName: user.fullName,
         phone: user.phone,
         salonName: user.barberProfile?.salonName ?? null,
@@ -741,6 +861,7 @@ export class BarberService implements OnModuleInit {
          * وجود ندارد.
          */
         publicPageSubscription: subscriptionByUser.get(user.id) ?? null,
+        publicPageSubscriptionKnown: subscriptionKnown,
         /**
          * وضعیت واقعی اشتراک «پیامکی» با سهمیه و مصرف آن: پلن فعال بر اساس
          * status **و** بازهٔ startDate تا endDate تشخیص داده می‌شود؛
@@ -807,6 +928,21 @@ export class BarberService implements OnModuleInit {
         profile.slotIntervalMinutes,
       ),
       portfolio: profile.portfolioImages ?? [],
+      // راه‌های ارتباطی و موقعیت مکانیِ اختیاری برای دکمه‌های تماس/شبکه‌های
+      // اجتماعی و مسیریابی گوگل‌مپ/اسنپ. فقط مقادیر واقعیِ ثبت‌شده؛ decimal
+      // در MySQL به‌صورت رشته برمی‌گردد و باید عددی شود.
+      contactPhone: profile.contactPhone || null,
+      instagram: profile.instagram || null,
+      whatsapp: profile.whatsapp || null,
+      telegram: profile.telegram || null,
+      latitude:
+        profile.latitude === null || profile.latitude === undefined
+          ? null
+          : Number(profile.latitude),
+      longitude:
+        profile.longitude === null || profile.longitude === undefined
+          ? null
+          : Number(profile.longitude),
       services: (user.services ?? []).map(service => ({
         id: service.id,
         name: service.name,
@@ -1271,6 +1407,21 @@ export class BarberService implements OnModuleInit {
       slotIntervalMinutes: normalizeSlotIntervalMinutes(
         profile.slotIntervalMinutes,
       ),
+      // راه‌های ارتباطی و موقعیت مکانی — مستقیم از پروفایل (بدون draft
+      // چون فیلد عملیاتی است و بدون تأیید اعمال می‌شود). decimal در MySQL
+      // به‌صورت رشته برمی‌گردد؛ برای JSON عددی به Number تبدیل می‌شود.
+      contactPhone: profile.contactPhone || null,
+      instagram: profile.instagram || null,
+      whatsapp: profile.whatsapp || null,
+      telegram: profile.telegram || null,
+      latitude:
+        profile.latitude === null || profile.latitude === undefined
+          ? null
+          : Number(profile.latitude),
+      longitude:
+        profile.longitude === null || profile.longitude === undefined
+          ? null
+          : Number(profile.longitude),
       createdAt: profile.createdAt,
     };
   }
@@ -1515,6 +1666,42 @@ export class BarberService implements OnModuleInit {
     }
     if (dto.slotIntervalMinutes !== undefined) {
       profile.slotIntervalMinutes = dto.slotIntervalMinutes;
+    }
+
+    // جفت عرض/طول جغرافیایی: هر دو با هم یا هر دو null. DTO همین قاعده را
+    // اعتبارسنجی می‌کند؛ اینجا کنترل نهایی است تا مسیرهای داخلی (تست/ادمین)
+    // هم هرگز جفت ناقص در دیتابیس نگذارند.
+    const latitudeMissing = dto.latitude === undefined;
+    const longitudeMissing = dto.longitude === undefined;
+    if (
+      latitudeMissing !== longitudeMissing ||
+      (!latitudeMissing && (dto.latitude === null) !== (dto.longitude === null))
+    ) {
+      throw new BadRequestException(
+        'طول و عرض جغرافیایی باید همراه هم ارسال شوند (هر دو مقدار یا هر دو null)',
+      );
+    }
+
+    // راه‌های ارتباطی و موقعیت مکانی مثل ساعت کاری فیلد عملیاتی‌اند:
+    // بدون نیاز به تأیید مجدد اعمال می‌شوند و بلافاصله در صفحهٔ عمومی دیده
+    // می‌شوند. مقدار `null` یعنی پاک‌کردن (مثلاً حذف موقعیت مکانی).
+    if (dto.contactPhone !== undefined) {
+      profile.contactPhone = dto.contactPhone ?? null;
+    }
+    if (dto.instagram !== undefined) {
+      profile.instagram = dto.instagram ?? null;
+    }
+    if (dto.whatsapp !== undefined) {
+      profile.whatsapp = dto.whatsapp ?? null;
+    }
+    if (dto.telegram !== undefined) {
+      profile.telegram = dto.telegram ?? null;
+    }
+    if (dto.latitude !== undefined) {
+      profile.latitude = dto.latitude ?? null;
+    }
+    if (dto.longitude !== undefined) {
+      profile.longitude = dto.longitude ?? null;
     }
 
     const byAdmin = Boolean(options?.byAdmin);
@@ -1890,13 +2077,61 @@ export class BarberService implements OnModuleInit {
     return { id: userId, isActive: result.isActive, isAccountActive: true };
   }
 
-  async remove(id: number) {
+  /** Administrators can replace or clear a locked public slug. */
+  async updateAdminSlug(userId: number, rawSlug: string | null) {
+    let slug: string | null = null;
+    if (rawSlug !== null && rawSlug.trim() !== '') {
+      const validation = validatePublicPageSlug(rawSlug);
+      if (!validation.valid) throw new BadRequestException(validation.reason);
+      slug = validation.slug;
+    }
+    let previousSlug: string | null = null;
+    try {
+      await this.profileRepository.manager.transaction(async manager => {
+        const profiles = manager.getRepository(BarberProfile);
+        const profile = await profiles.findOne({
+          where: { userId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!profile) throw new NotFoundException('پروفایل آرایشگر یافت نشد');
+        previousSlug = profile.slug ?? null;
+        if (slug === previousSlug) return;
+        if (slug) {
+          const existing = await profiles.findOne({ where: { slug } });
+          if (existing && existing.id !== profile.id) {
+            throw new ConflictException(
+              'این اسلاگ قبلاً توسط سالن دیگری انتخاب شده است',
+            );
+          }
+        }
+        profile.slug = slug;
+        await profiles.save(profile);
+      });
+    } catch (error) {
+      if (isDuplicateEntryError(error)) {
+        throw new ConflictException(
+          'این اسلاگ قبلاً توسط سالن دیگری انتخاب شده است',
+        );
+      }
+      throw error;
+    }
+    if (previousSlug !== slug) {
+      this.notifyPublicProfileChanged(userId, previousSlug);
+      this.notifyPublicProfileChanged(userId, slug);
+    }
+    return { userId, slug, previousSlug };
+  }
+
+  async remove(id: number, actorId?: number) {
     const user = await this.userRepo.findOne({
       where: { id },
       relations: { barberProfile: true },
     });
     if (!user || !user.roles?.includes(Role.Barber) || !user.barberProfile) {
       throw new NotFoundException('آرایشگر یافت نشد');
+    }
+    if (user.roles.includes(Role.Admin) || user.id === actorId) {
+      throw new BadRequestException('حذف حساب مدیر یا حساب خودتان مجاز نیست');
     }
 
     const manager = this.userRepo.manager;
@@ -1926,18 +2161,13 @@ export class BarberService implements OnModuleInit {
       );
     }
 
+    /** Club records and account deletion must succeed or roll back together. */
+    await manager.transaction(async tx => {
+      await tx.getRepository(ClubCustomer).delete({ customerId: id });
+      await tx.getRepository(User).delete(id);
+    });
+    // Invalidate only after commit, so a cache refill cannot see the old row.
     this.notifyPublicProfileChanged(id, user.barberProfile.slug);
-
-    /**
-     * این کاربر ممکن است در باشگاه مشتریانِ آرایشگر دیگری هم رکورد داشته
-     * باشد؛ در production قید FK روی `club_customers.customer_id` نیست و
-     * حذفِ حساب، آن رکوردها را یتیم می‌گذارد (نوبتِ دستیِ بعدی روی آن‌ها با
-     * خطای کلید خارجی روی `bookings.customer_id` ۵۰۰ می‌شود). پس قبل از
-     * حذف حساب پاک می‌شوند.
-     */
-    await manager.getRepository(ClubCustomer).delete({ customerId: id });
-
-    await this.userRepo.delete(id);
     return { id };
   }
 

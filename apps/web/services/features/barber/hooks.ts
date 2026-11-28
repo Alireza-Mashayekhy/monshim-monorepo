@@ -167,10 +167,10 @@ export const useUpdateBarberProfile = () => {
         toast.success('پروفایل با موفقیت به‌روزرسانی شد.');
       }
     },
-    onError: (error: any) => {
-      toast.error(
-        error.response?.data?.message || 'خطا در به‌روزرسانی پروفایل',
-      );
+    onError: (error: unknown) => {
+      // پیام فارسی سرور (شامل خطاهای آرایه‌ای class-validator مثل
+      // «طول و عرض جغرافیایی باید همراه هم ارسال شوند») نمایش داده می‌شود.
+      toast.error(getApiErrorMessage(error, 'خطا در به‌روزرسانی پروفایل'));
     },
   });
 };
@@ -376,7 +376,19 @@ export const useCreateBarberReview = () => {
       barberId: number | string;
       dto: CreateBarberReviewDto;
     }) => createBarberReview(barberId, dto),
-    onSuccess: (_, variables) => {
+    onSuccess: (result, variables) => {
+      queryClient.setQueryData(
+        ['my-barber-review', variables.barberId],
+        {
+          status: result.status,
+          message: result.message,
+          data: {
+            myReview: result.data,
+            canReview: false,
+            eligibilityReason: 'ALREADY_REVIEWED',
+          },
+        },
+      );
       queryClient.invalidateQueries({ queryKey: ['barber-reviews'] });
       queryClient.invalidateQueries({
         queryKey: ['my-barber-review', variables.barberId],

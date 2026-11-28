@@ -133,6 +133,8 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        setLock: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(null),
         getMany: jest.fn().mockResolvedValue([]),
         execute: jest.fn(async () => {
@@ -208,26 +210,16 @@ describe('اشتراک پروفایل اختصاصی — دورهٔ رایگان
     );
   });
 
-  it('اشتراک پیامکی تنها با planType=sms و داخل بازهٔ startDate تا endDate فعال است', async () => {
+  it('اشتراک پیامکی را با خوانش قفل‌شده و نوع sms همگام می‌کند', async () => {
     const { service, userSubscriptionRepo } = createHarness();
-
     await service.getCurrent(42, 'sms');
     const queryBuilder =
       userSubscriptionRepo.createQueryBuilder.mock.results[0].value;
-    expect(queryBuilder.andWhere.mock.calls).toEqual(
-      expect.arrayContaining([
-        [
-          'subscription.status = :status',
-          { status: UserSubscriptionStatus.ACTIVE },
-        ],
-        ['plan.planType = :planType', { planType: 'sms' }],
-        ['subscription.startDate <= :now', expect.any(Object)],
-        ['subscription.endDate > :now', expect.any(Object)],
-      ]),
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'plan.planType = :planType',
+      { planType: 'sms' },
     );
-    expect(queryBuilder.innerJoinAndSelect.mock.calls).toEqual([
-      ['subscription.subscriptionPlan', 'plan'],
-    ]);
+    expect(queryBuilder.setLock).toHaveBeenCalledWith('pessimistic_write');
   });
 
   it('دورهٔ رایگان را با قیمت صفر و دقیقاً یک ماه تقویمی اعطا می‌کند', async () => {

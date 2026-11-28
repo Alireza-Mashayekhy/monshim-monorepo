@@ -23,6 +23,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useDebounce } from '@/hooks/use-debounce';
+import { isoToJalali } from '@/lib/date-utils';
+import { toFa } from '@/lib/jalali';
 import { useDeleteUser, useUsersList } from '@/services/features/users/hooks';
 import { UserResponse } from '@/services/features/users/types';
 
@@ -70,7 +72,9 @@ export default function Users() {
                 <TableCell className="text-center">{user.id}</TableCell>
                 <TableCell>{user.fullName}</TableCell>
                 <TableCell>{user.phone}</TableCell>
-                <TableCell>{user.birthDate}</TableCell>
+                <TableCell>
+                  {user.birthDate ? toFa(isoToJalali(user.birthDate)) || '—' : '—'}
+                </TableCell>
                 <TableCell>{user.roles.join(' - ')}</TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>

@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Roles } from 'src/common/decorators/roles.decorator';
@@ -16,6 +17,7 @@ import { AuthGuard } from 'src/common/guards/auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 
 import { BarberService } from './barber.service';
+import { AdminUpdateSlugDto } from './dto/admin-update-slug.dto';
 import { BarberQueryDto } from './dto/barber-query.dto';
 import { ReviewBarberDto } from './dto/review-barber.dto';
 import { SetBarberActiveDto } from './dto/set-barber-active.dto';
@@ -64,6 +66,14 @@ export class BarberAdminController {
     return this.barberService.updateByProfileId(id, updateBarberDto);
   }
 
+  @Patch(':id/slug')
+  updateSlug(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AdminUpdateSlugDto,
+  ) {
+    return this.barberService.updateAdminSlug(id, dto.slug);
+  }
+
   @Patch(':id/active')
   setActive(
     @Param('id', ParseIntPipe) id: number,
@@ -79,8 +89,11 @@ export class BarberAdminController {
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.barberService.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user: { id: number } },
+  ) {
+    return this.barberService.remove(id, req.user.id);
   }
 
   @Patch(':id/review')

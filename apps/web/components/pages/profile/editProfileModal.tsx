@@ -7,8 +7,8 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import * as z from 'zod';
 
+import { BirthDatePicker } from '@/components/form/birth-date-picker';
 import FormProvider from '@/components/form/form-provider';
-import { PersianDatePicker } from '@/components/form/persian-date-picker';
 import RHFInput from '@/components/form/rhf-input';
 import { Button } from '@/components/ui/button';
 import {
@@ -102,7 +102,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             placeholder="نام خود را وارد کنید"
           />
 
-          <PersianDatePicker name="birthDate" label="تاریخ تولد" />
+          <BirthDatePicker name="birthDate" label="تاریخ تولد" />
 
           <div>
             <label className="text-xs font-bold text-gray-500 mb-1 block">

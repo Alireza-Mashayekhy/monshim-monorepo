@@ -241,6 +241,40 @@ export class BarberProfile {
   @Column({ name: 'referred_by', type: 'int', nullable: true })
   referredBy: number | null;
 
+  // ---- راه‌های ارتباطی و موقعیت مکانی (صفحهٔ اختصاصی) ----
+  // همه nullable هستند تا رکوردهای موجود بدون این فیلدها هم سالم بمانند؛
+  // ساخت ستون‌ها در production با `onModuleInit` و فایل
+  // `sql/barber-contact-location.sql` به‌صورت idempotent انجام می‌شود.
+
+  /** شماره تماس سالن (تلفن ثابت با کد شهر یا موبایل) برای دکمهٔ «تماس». */
+  @Column({
+    name: 'contact_phone',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  contactPhone: string | null;
+
+  /** شناسهٔ اینستاگرام بدون @ و بدون لینک (فقط کاراکترهای مجاز). */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  instagram: string | null;
+
+  /** شماره واتساپ به فرمت `09…` (در صفحهٔ عمومی به `98…` برای wa.me تبدیل می‌شود). */
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  whatsapp: string | null;
+
+  /** شناسهٔ تلگرام بدون @ و بدون لینک (فقط کاراکترهای مجاز). */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  telegram: string | null;
+
+  /** عرض جغرافیایی (برای گوگل‌مپ و اسنپ)؛ فقط وقتی معتبر است که longitude هم ثبت شده باشد. */
+  @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
+  latitude: number | null;
+
+  /** طول جغرافیایی (برای گوگل‌مپ و اسنپ)؛ فقط وقتی معتبر است که latitude هم ثبت شده باشد. */
+  @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
+  longitude: number | null;
+
   @ManyToOne(() => Province)
   @JoinColumn({ name: 'province_id' })
   province?: Province;

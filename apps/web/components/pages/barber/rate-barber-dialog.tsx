@@ -55,7 +55,7 @@ export function RateBarberDialog({
       },
       {
         onSuccess: () => {
-          onOpenChange(false);
+          handleOpenChange(false);
         },
       },
     );

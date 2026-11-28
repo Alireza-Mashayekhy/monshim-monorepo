@@ -30,6 +30,12 @@ import {
   notRefundedCondition,
 } from 'src/payment/payment-ledger';
 import { Referral } from 'src/referral/entities/referral.entity';
+import {
+  PUBLIC_PAGE_PLAN_TYPE,
+  PUBLIC_PAGE_PURCHASE_PLAN_KEYS,
+  SMS_PLAN_TYPE,
+} from 'src/subscription/constants';
+import { SubscriptionPlan } from 'src/subscription/entities/subscription-plan.entity';
 import { UserSubscription } from 'src/subscription/entities/user-subscription.entity';
 import {
   PublicPageSubscriptionSummary,
@@ -39,14 +45,20 @@ import { UserSubscriptionService } from 'src/subscription/user-subscription.serv
 import { Brackets, In, IsNull, Repository, SelectQueryBuilder } from 'typeorm';
 
 import {
+  DiscountTarget,
   PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
   PublicPageActivationReason,
   REFERRAL_PUBLIC_PAGE_DISCOUNT_PERCENT,
 } from './constants';
+import {
+  assertDiscountDateRange,
+  parseDiscountDate,
+} from './discount-validity.util';
 import { CreatePublicPageDiscountDto } from './dto/create-public-page-discount.dto';
 import { UpdatePublicPageDiscountDto } from './dto/update-public-page-discount.dto';
 import { BarberPublicPagePurchase } from './entities/barber-public-page-purchase.entity';
 import { PublicPageDiscount } from './entities/public-page-discount.entity';
+import { PublicPageDiscountUsage } from './entities/public-page-discount-usage.entity';
 import { validatePublicPageSlug } from './slug.util';
 
 export interface PublicPageStatus {
@@ -147,6 +159,14 @@ export class PublicPageService implements OnModuleInit {
     private readonly barberService: BarberService,
     private readonly configService: ConfigService,
     private readonly userSubscriptionService: UserSubscriptionService,
+
+    /** پلن‌های اشتراک — قیمتِ واقعیِ پلن برای استعلام/اعتبارسنجی کد تخفیف. */
+    @InjectRepository(SubscriptionPlan)
+    private readonly planRepo: Repository<SubscriptionPlan>,
+
+    /** ردیف‌های مصرف موفق کدها (سهمیهٔ کل/هر کاربر). */
+    @InjectRepository(PublicPageDiscountUsage)
+    private readonly discountUsageRepo: Repository<PublicPageDiscountUsage>,
   ) {}
 
   /**
@@ -908,10 +928,19 @@ export class PublicPageService implements OnModuleInit {
     const code = this.normalizeDiscountCode(dto.code);
     await this.assertDiscountCodeIsFree(code);
 
+    const startsAt = parseDiscountDate(dto.startsAt ?? null, 'start');
+    const expiresAt = parseDiscountDate(dto.expiresAt ?? null, 'end');
+    assertDiscountDateRange(startsAt, expiresAt);
     const discount = this.discountRepo.create({
       code,
       percentOff: dto.percentOff,
       isActive: true,
+      applicableTo: dto.applicableTo ?? 'PUBLIC_PAGE',
+      maxTotalUses: dto.maxTotalUses ?? null,
+      maxUsesPerUser: dto.maxUsesPerUser ?? null,
+      usedCount: 0,
+      startsAt,
+      expiresAt,
     });
     try {
       return await this.discountRepo.save(discount);
@@ -926,6 +955,15 @@ export class PublicPageService implements OnModuleInit {
   async updateDiscountCode(id: string, dto: UpdatePublicPageDiscountDto) {
     const discount = await this.discountRepo.findOne({ where: { id } });
     if (!discount) throw new NotFoundException('کد تخفیف یافت نشد');
+    const startsAt =
+      dto.startsAt === undefined
+        ? (discount.startsAt ?? null)
+        : parseDiscountDate(dto.startsAt, 'start');
+    const expiresAt =
+      dto.expiresAt === undefined
+        ? (discount.expiresAt ?? null)
+        : parseDiscountDate(dto.expiresAt, 'end');
+    assertDiscountDateRange(startsAt, expiresAt);
     if (dto.code !== undefined) {
       const code = this.normalizeDiscountCode(dto.code);
       if (code !== discount.code) {
@@ -935,6 +973,14 @@ export class PublicPageService implements OnModuleInit {
     }
     if (dto.percentOff !== undefined) discount.percentOff = dto.percentOff;
     if (dto.isActive !== undefined) discount.isActive = dto.isActive;
+    if (dto.applicableTo !== undefined)
+      discount.applicableTo = dto.applicableTo;
+    if (dto.maxTotalUses !== undefined)
+      discount.maxTotalUses = dto.maxTotalUses;
+    if (dto.maxUsesPerUser !== undefined)
+      discount.maxUsesPerUser = dto.maxUsesPerUser;
+    discount.startsAt = startsAt;
+    discount.expiresAt = expiresAt;
     try {
       return await this.discountRepo.save(discount);
     } catch (error) {
@@ -951,24 +997,217 @@ export class PublicPageService implements OnModuleInit {
     return { id };
   }
 
-  async getDiscountQuote(rawCode: string) {
-    const code = this.normalizeDiscountCode(rawCode);
+  /**
+   * پلنِ هدفِ کد تخفیف را **از دیتابیس** پیدا می‌کند؛ قیمت هرگز از فرانت
+   * نمی‌آید. برای `SUBSCRIPTION` فقط پلن فعالِ پیامکی و برای `PUBLIC_PAGE`
+   * فقط پلن فعالِ خرید صفحهٔ اختصاصی پذیرفته می‌شود.
+   */
+  private async findDiscountTargetPlan(
+    target: DiscountTarget,
+    planId: string,
+  ): Promise<SubscriptionPlan | null> {
+    if (target === 'SUBSCRIPTION') {
+      return this.planRepo.findOne({
+        where: { id: planId, isActive: true, planType: SMS_PLAN_TYPE },
+      });
+    }
+
+    return this.planRepo.findOne({
+      where: {
+        id: planId,
+        isActive: true,
+        planType: PUBLIC_PAGE_PLAN_TYPE,
+        planKey: In([...PUBLIC_PAGE_PURCHASE_PLAN_KEYS]),
+      },
+    });
+  }
+
+  /**
+   * استعلام و اعتبارسنجی کد تخفیف برای یک پلنِ مشخص.
+   *
+   * همهٔ محاسبات (قیمت اصلی، مبلغ تخفیف، مبلغ نهایی) از پلنِ دیتابیس
+   * انجام می‌شود؛ فرانت فقط `code`/`target`/`planId` می‌فرستد. چک‌های
+   * اعتبارسنجی:
+   *   ۱. کد فعال و منقضی‌نشده باشد؛
+   *   ۲. `applicable_to` با هدفِ پرداخت بخواند؛
+   *   ۳. سقف کلِ استفاده‌های موفق تمام نشده باشد؛
+   *   ۴. سقف استفادهٔ همین کاربر تمام نشده باشد.
+   *
+   * نکته: اینجا فقط **خوانده** می‌شود؛ ثبت مصرف و افزایش شمارنده هنگام
+   * «پرداخت موفق» (`recordDiscountUsage`) انجام می‌شود تا رفتن به درگاه
+   * (PENDING) سهمیه نسوزاند.
+   */
+  async getDiscountQuote(params: {
+    userId: number;
+    code: string;
+    target: DiscountTarget;
+    planId: string;
+  }) {
+    const code = this.normalizeDiscountCode(params.code);
     const discount = await this.discountRepo.findOne({
       where: { code, isActive: true },
     });
     if (!discount)
       throw new BadRequestException('کد تخفیف نامعتبر یا غیرفعال است');
 
-    const discountAmount = Math.round(
-      (PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS * discount.percentOff) / 100,
+    const now = Date.now();
+    if (discount.startsAt && discount.startsAt.getTime() > now) {
+      throw new BadRequestException(
+        'زمان استفاده از این کد تخفیف هنوز شروع نشده است',
+      );
+    }
+    if (discount.expiresAt && discount.expiresAt.getTime() < now) {
+      throw new BadRequestException(
+        'مهلت استفاده از این کد تخفیف به پایان رسیده است',
+      );
+    }
+
+    if (
+      discount.applicableTo !== 'BOTH' &&
+      discount.applicableTo !== params.target
+    ) {
+      throw new BadRequestException(
+        params.target === 'SUBSCRIPTION'
+          ? 'این کد تخفیف برای خرید اشتراک پیامکی معتبر نیست'
+          : 'این کد تخفیف برای خرید صفحهٔ اختصاصی معتبر نیست',
+      );
+    }
+
+    if (discount.maxTotalUses != null) {
+      const used = await this.discountUsageRepo.count({
+        where: { discountId: discount.id },
+      });
+      if (used >= discount.maxTotalUses) {
+        throw new BadRequestException(
+          'سقف استفاده از این کد تخفیف تکمیل شده است',
+        );
+      }
+    }
+
+    if (discount.maxUsesPerUser != null) {
+      const usedByUser = await this.discountUsageRepo.count({
+        where: { discountId: discount.id, userId: params.userId },
+      });
+      if (usedByUser >= discount.maxUsesPerUser) {
+        throw new BadRequestException(
+          'سقف استفاده شما از این کد تخفیف تکمیل شده است',
+        );
+      }
+    }
+
+    const plan = await this.findDiscountTargetPlan(
+      params.target,
+      params.planId,
     );
+    if (!plan) {
+      throw new BadRequestException('پلن انتخاب‌شده معتبر نیست');
+    }
+
+    const originalAmount = Math.round(Number(plan.price));
+    const discountAmount = Math.round(
+      (originalAmount * discount.percentOff) / 100,
+    );
+
     return {
+      discountId: discount.id,
       code: discount.code,
       percentOff: discount.percentOff,
-      originalAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
+      applicableTo: discount.applicableTo,
+      planId: plan.id,
+      target: params.target,
+      originalAmount,
       discountAmount,
-      amount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS - discountAmount,
+      amount: originalAmount - discountAmount,
     };
+  }
+
+  /**
+   * ثبت نهاییِ مصرف یک کد تخفیف — فقط هنگام «پرداخت موفق».
+   *
+   * در یک تراکنش و با قفل `FOR UPDATE` روی ردیف کد:
+   *   • سقف کل/سقف هر کاربر دوباره (رقابتی) سنجیده می‌شود؛
+   *   • ردیف `discount_usages` با `payment_id` یکتا درج می‌شود (idempotent
+   *     در برابر تسویهٔ تکراری یک پرداخت)؛
+   *   • `used_count` کد افزایش می‌یابد.
+   *
+   * اگر بین «آغاز پرداخت» و «تسویه»، سقف تمام شده باشد (دو پرداخت هم‌زمان)،
+   * مصرف ثبت **نمی‌شود** و خطا فقط log می‌شود؛ فعال‌سازی اشتراکِ پرداختِ
+   * موفق متوقف نمی‌شود. `false` یعنی مصرفی ثبت نشد.
+   */
+  async recordDiscountUsage(params: {
+    discountId: string;
+    userId: number;
+    paymentId: string | null;
+    purpose: DiscountTarget;
+    discountAmount: number;
+  }): Promise<boolean> {
+    try {
+      return await this.discountUsageRepo.manager.transaction(async manager => {
+        // قفل ردیف کد تا شمارش + درج + افزایش شمارنده اتمی بماند.
+        const discount = await manager.findOne(PublicPageDiscount, {
+          where: { id: params.discountId },
+          lock: { mode: 'pessimistic_write' },
+        });
+
+        // تسویهٔ تکراریِ یک پرداخت نباید دوباره مصرف بسازد.
+        if (params.paymentId) {
+          const existing = await manager.findOne(PublicPageDiscountUsage, {
+            where: { paymentId: params.paymentId },
+          });
+          if (existing) return true;
+        }
+
+        if (discount) {
+          if (discount.maxTotalUses != null) {
+            const used = await manager.count(PublicPageDiscountUsage, {
+              where: { discountId: params.discountId },
+            });
+            if (used >= discount.maxTotalUses) {
+              this.logger.warn(
+                `مصرف کد «${discount.code}» ثبت نشد: سقف کل تکمیل است (${used}/${discount.maxTotalUses})`,
+              );
+              return false;
+            }
+          }
+          if (discount.maxUsesPerUser != null) {
+            const usedByUser = await manager.count(PublicPageDiscountUsage, {
+              where: { discountId: params.discountId, userId: params.userId },
+            });
+            if (usedByUser >= discount.maxUsesPerUser) {
+              this.logger.warn(
+                `مصرف کد «${discount.code}» توسط کاربر ${params.userId} ثبت نشد: سقف هر کاربر تکمیل است (${usedByUser}/${discount.maxUsesPerUser})`,
+              );
+              return false;
+            }
+          }
+        }
+
+        await manager.insert(PublicPageDiscountUsage, {
+          discountId: params.discountId,
+          userId: params.userId,
+          paymentId: params.paymentId,
+          purpose: params.purpose,
+          discountAmount: params.discountAmount,
+        });
+
+        if (discount) {
+          await manager.update(
+            PublicPageDiscount,
+            { id: params.discountId },
+            { usedCount: () => 'used_count + 1' },
+          );
+        }
+
+        return true;
+      });
+    } catch (error) {
+      // شکستِ ثبت مصرف نباید تسویه/فعال‌سازی پرداختِ موفق را از کار بیندازد؛
+      // فقط برای اپراتور روشن می‌شود که شمارنده عقب افتاده است.
+      this.logger.error(
+        `ثبت مصرف کد تخفیف (پرداخت ${params.paymentId ?? '-'}) ناموفق بود: ${String(error)}`,
+      );
+      return false;
+    }
   }
 
   /**

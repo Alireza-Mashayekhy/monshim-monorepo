@@ -2,9 +2,58 @@ import { DataSource, Table, TableColumn } from 'typeorm';
 import { ConnectionMetadataBuilder } from 'typeorm/connection/ConnectionMetadataBuilder';
 
 import { PublicPageDiscount } from './entities/public-page-discount.entity';
+import { PublicPageDiscountUsage } from './entities/public-page-discount-usage.entity';
 import { PublicPageSchemaService } from './public-page-schema.service';
 
-function buildExistingTable() {
+type GuardedTable = 'public_page_discounts' | 'discount_usages';
+
+const DISCOUNT_COLUMNS = [
+  'id',
+  'code',
+  'percent_off',
+  'is_active',
+  'applicable_to',
+  'max_total_uses',
+  'max_uses_per_user',
+  'used_count',
+  'starts_at',
+  'expires_at',
+  'created_at',
+  'updated_at',
+];
+
+const USAGE_COLUMNS = [
+  'id',
+  'discount_id',
+  'user_id',
+  'payment_id',
+  'purpose',
+  'discount_amount',
+  'created_at',
+];
+
+/** اسکیمای کاملِ یکی از جدول‌های گارد (با همان ستون‌های entity) */
+function buildExistingTable(name: GuardedTable) {
+  const columns =
+    name === 'public_page_discounts' ? DISCOUNT_COLUMNS : USAGE_COLUMNS;
+  return new Table({
+    name,
+    columns: columns.map(
+      columnName =>
+        new TableColumn({
+          name: columnName,
+          type: 'varchar',
+          isNullable: true,
+        }),
+    ),
+  });
+}
+
+/**
+ * اسکیمای قدیمیِ جدول کدها (پیش از ستون‌های سقف استفاده/انقضا) — برای تست
+ * «افزودن ستون‌های جامانده» روی جدول موجود در production.
+ */
+function buildLegacyDiscountTable() {
   return new Table({
     name: 'public_page_discounts',
     columns: [
@@ -21,24 +70,34 @@ function buildExistingTable() {
 /**
  * دیتابیس ساختگی که فقط «اسکیمای موجود» را شبیه‌سازی می‌کند؛ بقیهٔ مسیر
  * (ساخت `Table` از متادیتای entity) واقعی است تا دقیقاً همان چیزی تست شود که
- * در production اجرا می‌شود.
+ * در production اجرا می‌شود. گارد حالا دو جدول دارد (کدها + مصرف‌ها).
  */
 async function createServiceStub(options?: {
-  existingTable?: Table;
+  /** جدول‌هایی که از قبل در دیتابیس هستند (بر اساس نام) */
+  existingTables?: Table[];
   broken?: boolean;
 }) {
   const template = new DataSource({
     type: 'mysql',
-    entities: [PublicPageDiscount],
+    entities: [PublicPageDiscount, PublicPageDiscountUsage],
   });
-  const [metadata] = await new ConnectionMetadataBuilder(
+  const metadatas = await new ConnectionMetadataBuilder(
     template,
-  ).buildEntityMetadatas([PublicPageDiscount]);
+  ).buildEntityMetadatas([PublicPageDiscount, PublicPageDiscountUsage]);
+  const metadataByEntity = new Map<any, any>([
+    [PublicPageDiscount, metadatas[0]],
+    [PublicPageDiscountUsage, metadatas[1]],
+  ]);
 
+  const existingTables = options?.existingTables ?? [];
   const runner = {
     connect: jest.fn().mockResolvedValue(undefined),
     release: jest.fn().mockResolvedValue(undefined),
-    getTable: jest.fn().mockResolvedValue(options?.existingTable),
+    getTable: jest.fn((name: string) =>
+      Promise.resolve(
+        existingTables.find(table => table.name === name) ?? null,
+      ),
+    ),
     createTable: jest.fn().mockResolvedValue(undefined),
     addColumn: jest.fn().mockResolvedValue(undefined),
   };
@@ -50,7 +109,7 @@ async function createServiceStub(options?: {
         },
       } as unknown as DataSource)
     : ({
-        getMetadata: () => metadata,
+        getMetadata: (entity: any) => metadataByEntity.get(entity),
         driver: template.driver,
         createQueryRunner: () => runner,
       } as unknown as DataSource);
@@ -63,23 +122,32 @@ async function createServiceStub(options?: {
 }
 
 describe('PublicPageSchemaService (گارد اسکیمای کدهای تخفیف)', () => {
-  it('اگر جدول public_page_discounts در پایگاه داده نباشد، هنگام بوت می‌سازد', async () => {
+  it('اگر جدول‌ها در پایگاه داده نباشند، هنگام بوت هر دو را می‌سازد', async () => {
     const { service, runner, logger } = await createServiceStub();
 
     await service.onApplicationBootstrap();
 
-    expect(runner.createTable).toHaveBeenCalledTimes(1);
+    expect(runner.createTable).toHaveBeenCalledTimes(2);
+    expect(
+      runner.createTable.mock.calls.map(call => (call[0] as Table).name),
+    ).toEqual(['public_page_discounts', 'discount_usages']);
     // `ifNotExists = true` تا بالا آمدن هم‌زمان چند نمونه خطا ندهد
     expect(runner.createTable.mock.calls[0][1]).toBe(true);
     expect(logger.log).toHaveBeenCalledWith(
       expect.stringContaining('public_page_discounts'),
     );
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('discount_usages'),
+    );
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it('وقتی جدول از قبل وجود دارد هیچ کاری نمی‌کند (idempotent)', async () => {
+  it('وقتی هر دو جدول از قبل وجود دارند هیچ کاری نمی‌کند (idempotent)', async () => {
     const { service, runner, logger } = await createServiceStub({
-      existingTable: buildExistingTable(),
+      existingTables: [
+        buildExistingTable('public_page_discounts'),
+        buildExistingTable('discount_usages'),
+      ],
     });
 
     await service.onApplicationBootstrap();
@@ -87,6 +155,33 @@ describe('PublicPageSchemaService (گارد اسکیمای کدهای تخفیف
     expect(runner.createTable).not.toHaveBeenCalled();
     expect(runner.addColumn).not.toHaveBeenCalled();
     expect(logger.log).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('ستون‌های جدیدِ کد تخفیف روی جدول قدیمی اضافه می‌شوند', async () => {
+    const { service, runner, logger } = await createServiceStub({
+      existingTables: [
+        buildLegacyDiscountTable(),
+        buildExistingTable('discount_usages'),
+      ],
+    });
+
+    await service.onApplicationBootstrap();
+
+    expect(runner.createTable).not.toHaveBeenCalled();
+    expect(
+      runner.addColumn.mock.calls.map(call => call[1].name).sort(),
+    ).toEqual([
+      'applicable_to',
+      'expires_at',
+      'max_total_uses',
+      'max_uses_per_user',
+      'starts_at',
+      'used_count',
+    ]);
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('public_page_discounts'),
+    );
     expect(logger.error).not.toHaveBeenCalled();
   });
 

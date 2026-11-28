@@ -1,9 +1,13 @@
 'use client';
 
-import { CheckCircle2, Clock, Star, XCircle } from 'lucide-react';
+import { Star } from 'lucide-react';
 import { useState } from 'react';
 
 import { RateBarberDialog } from '@/components/pages/barber/rate-barber-dialog';
+import {
+  MyReviewStatusBadge,
+  ReviewEligibilityMessage,
+} from '@/components/pages/barber/review-status';
 import { StarRating } from '@/components/shared/star-rating';
 import { Button } from '@/components/ui/button';
 import { toFa } from '@/lib/jalali';
@@ -36,34 +40,6 @@ const formatDate = (iso: string) => {
   }
 };
 
-const MyReviewStatusBadge = ({ review }: { review: BarberReview }) => {
-  if (review.status === 'pending') {
-    return (
-      <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-700 leading-6">
-        <Clock size={15} className="mt-0.5 shrink-0" />
-        <span>نظر شما ثبت شد و پس از تایید ادمین نمایش داده می‌شود.</span>
-      </div>
-    );
-  }
-  if (review.status === 'rejected') {
-    return (
-      <div className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-3.5 text-xs text-red-600 leading-6">
-        <XCircle size={15} className="mt-0.5 shrink-0" />
-        <span>
-          متأسفانه نظر شما تایید نشد.
-          {review.adminNote ? ` (دلیل: ${review.adminNote})` : ''}
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-start gap-2 rounded-2xl border border-green-200 bg-green-50 p-3.5 text-xs text-green-700 leading-6">
-      <CheckCircle2 size={15} className="mt-0.5 shrink-0" />
-      <span>نظر شما تایید شد و در لیست نظرات نمایش داده می‌شود.</span>
-    </div>
-  );
-};
-
 const ReviewItem = ({ review }: { review: BarberReview }) => {
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-4 space-y-2">
@@ -94,6 +70,7 @@ const ReviewItem = ({ review }: { review: BarberReview }) => {
 
 interface ReviewsSectionProps {
   barberId: number | string;
+  barberName?: string;
   rating?: number | null;
   reviewCount?: number | null;
   initialReviews?: ApiListResponse<BarberReview> | null;
@@ -101,6 +78,7 @@ interface ReviewsSectionProps {
 
 export function ReviewsSection({
   barberId,
+  barberName,
   rating,
   reviewCount,
   initialReviews,
@@ -119,10 +97,12 @@ export function ReviewsSection({
     initialReviews,
   );
 
-  const { data: myReviewData, isLoading: myReviewLoading } = useMyBarberReview(
-    barberId,
-    Boolean(user),
-  );
+  const {
+    data: myReviewData,
+    isLoading: myReviewLoading,
+    isError: myReviewError,
+    refetch: refetchMyReview,
+  } = useMyBarberReview(barberId, Boolean(user));
 
   const reviews = reviewsData?.data ?? [];
   const total = reviewsData?.pagination?.total ?? reviewCount ?? 0;
@@ -150,7 +130,7 @@ export function ReviewsSection({
           </p>
         </div>
 
-        {user && !myReviewLoading && canReview && (
+        {user && !myReviewLoading && !myReviewError && canReview && (
           <Button size="sm" onClick={() => setRateOpen(true)}>
             <Star size={14} className="fill-current" />
             ثبت نظر
@@ -159,9 +139,30 @@ export function ReviewsSection({
       </div>
 
       {/* وضعیت نظر من */}
-      {user && !myReviewLoading && myReview && (
+      {user && !myReviewLoading && !myReviewError && myReview && (
         <MyReviewStatusBadge review={myReview} />
       )}
+
+      {user && !myReviewLoading && myReviewError && (
+        <div className="rounded-2xl border border-gray-200 p-3 text-xs text-gray-600">
+          بررسی امکان ثبت نظر انجام نشد.{' '}
+          <button
+            type="button"
+            className="text-primary underline"
+            onClick={() => void refetchMyReview()}
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      )}
+      {user &&
+        !myReviewLoading &&
+        !myReviewError &&
+        !myReview &&
+        !canReview &&
+        myReviewData && (
+          <ReviewEligibilityMessage reason={myReviewData.data.eligibilityReason} />
+        )}
 
       {/* لیست نظرات */}
       {reviewsLoading ? (
@@ -222,6 +223,7 @@ export function ReviewsSection({
 
       <RateBarberDialog
         barberId={barberId}
+        barberName={barberName}
         open={rateOpen}
         onOpenChange={setRateOpen}
       />

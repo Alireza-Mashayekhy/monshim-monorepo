@@ -45,7 +45,10 @@ import { DEPOSIT_PAYMENT_TIMEOUT_HOURS } from '@/constants/booking';
 import { useDebounce } from '@/hooks/use-debounce';
 import { jalaliToIso } from '@/lib/date-utils';
 import { gregorianToJalali } from '@/lib/jalali';
-import { computeOrderPricing, formatCommissionLabel } from '@/lib/order-pricing';
+import {
+  computeOrderPricing,
+  formatCommissionLabel,
+} from '@/lib/order-pricing';
 import { normalizePhone } from '@/lib/phone';
 import { REMINDER_HOUR_CHOICES } from '@/lib/reminder';
 import { cn, formatPrice, toPersianDigits } from '@/lib/utils';
@@ -65,7 +68,10 @@ import type {
 } from '@/services/features/club/types';
 import { useMyServices } from '@/services/features/services/hooks';
 import { usePaymentConfig } from '@/services/features/settings/hooks';
-import { useCurrentUserSubscription } from '@/services/features/subscription/hooks';
+import {
+  useCurrentUserSubscription,
+  useUserSubscriptions,
+} from '@/services/features/subscription/hooks';
 
 import { NOT_APPROVED_MESSAGE, NotApprovedAlert } from './not-approved-alert';
 
@@ -208,11 +214,25 @@ export function ManualBookingDrawer({
     refetch: refetchSubscription,
   } = useCurrentUserSubscription();
 
+  const { data: subscriptionHistory } = useUserSubscriptions({ enabled: open });
   const subscription = subscriptionData?.data ?? null;
   const subscriptionResolved = !subscriptionLoading && !subscriptionError;
 
+  const reservedSms =
+    subscription && subscription.smsTotal > 0
+      ? (subscriptionHistory?.data ?? [])
+          .filter(
+            row =>
+              row.status === 'reserved' &&
+              row.subscriptionPlan?.planType === 'sms',
+          )
+          .reduce(
+            (sum, row) => sum + Math.max(0, row.smsTotal - row.smsUsed),
+            0,
+          )
+      : 0;
   const smsRemaining = subscription
-    ? Math.max(0, subscription.smsTotal - subscription.smsUsed)
+    ? Math.max(0, subscription.smsTotal - subscription.smsUsed) + reservedSms
     : 0;
 
   // «واجد شرایط پلن پیامکی» فقط وقتی اشتراک واقعاً فعّال و واجد اعتبارِ لازم است.
@@ -227,9 +247,7 @@ export function ManualBookingDrawer({
     ? SMS_CREDIT_COST_PER_TEMPLATE
     : SMS_CREDIT_COST_PER_TEMPLATE * 2;
   const canSendSmsReminder =
-    subscriptionResolved &&
-    !!subscription &&
-    smsRemaining >= reminderSmsCost;
+    subscriptionResolved && !!subscription && smsRemaining >= reminderSmsCost;
 
   const { data: services, isLoading: servicesLoading } = useMyServices();
 
@@ -1025,7 +1043,11 @@ export function ManualBookingDrawer({
 
                       <div className="flex items-center justify-between text-[10px] text-gray-500">
                         <span>
-                          {formatCommissionLabel(invoicePreview, 'کمیسیون سایت')}:
+                          {formatCommissionLabel(
+                            invoicePreview,
+                            'کمیسیون سایت',
+                          )}
+                          :
                         </span>
                         <span className="font-bold text-primary">
                           {toPersianDigits(
@@ -1065,7 +1087,7 @@ export function ManualBookingDrawer({
                   )
                 ) : (
                   <span className="text-[10px] font-bold">
-                    اعتبار باقیماندهٔ پلن:{' '}
+                    اعتبار باقیماندهٔ پلن و صف:{' '}
                     <span className="text-primary">
                       {toPersianDigits(smsRemaining)}
                     </span>{' '}
@@ -1190,7 +1212,9 @@ export function ManualBookingDrawer({
                     size={14}
                     className={cn(
                       'mt-0.5 shrink-0',
-                      subscriptionLoading ? 'animate-spin text-gray-400' : 'text-gray-400',
+                      subscriptionLoading
+                        ? 'animate-spin text-gray-400'
+                        : 'text-gray-400',
                     )}
                   />
 

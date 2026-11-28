@@ -5,6 +5,7 @@ export interface SubscriptionPlan {
   smsCount: number;
   price: number;
   durationDays: number;
+  planType: 'sms' | 'public_page';
   description: string | null;
   isActive: boolean;
   sortOrder: number;
@@ -17,7 +18,8 @@ export interface UpdateSubscriptionPlanDto {
   smsCount: number;
 }
 
-export type UserSubscriptionStatus = 'active' | 'expired' | 'canceled';
+export type UserSubscriptionStatus =
+  'active' | 'reserved' | 'expired' | 'canceled';
 
 /**
  * وضعیت نمایشیِ اشتراک پیامکی — مقدار از بک‌اند می‌آید (خلاصه‌ساز مرکزی) و
@@ -25,10 +27,7 @@ export type UserSubscriptionStatus = 'active' | 'expired' | 'canceled';
  * نمایش می‌دهد و خودش تشخیص «فعال بودن» را از داده‌های قدیمی/کش نمی‌سازد.
  */
 export type SmsSubscriptionDisplayStatus =
-  | 'active'
-  | 'scheduled'
-  | 'expired'
-  | 'canceled';
+  'active' | 'scheduled' | 'reserved' | 'expired' | 'canceled';
 
 /**
  * خلاصهٔ اشتراک پیامکی یک کاربر (فقط در فهرست مدیریت ادمین پر می‌شود).
@@ -40,6 +39,7 @@ export interface SmsSubscriptionStatus {
   planId: string;
   planKey: string | null;
   planName: string;
+  isFreeTrial: boolean;
   price: number;
   startDate: string;
   endDate: string;
@@ -53,6 +53,7 @@ export interface SmsSubscriptionStatus {
   smsRemaining: number;
   /** درصد مصرف سهمیه (۰ تا ۱۰۰). */
   usagePercent: number;
+  reservedCount: number;
 }
 
 export interface UserSubscription {
@@ -68,6 +69,8 @@ export interface UserSubscription {
   createdAt: string;
   updatedAt: string;
   subscriptionPlan: SubscriptionPlan;
+  /** Returned by the current-subscription endpoint. */
+  isFreeTrial?: boolean;
 }
 
 export interface SmsUsage {

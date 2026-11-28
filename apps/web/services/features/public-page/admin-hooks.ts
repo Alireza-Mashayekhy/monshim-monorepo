@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createPublicPageDiscount,
   deletePublicPageDiscount,
+  DiscountApplicableTo,
   getPublicPageDiscounts,
   updatePublicPageDiscount,
 } from './admin-api';
@@ -34,6 +35,11 @@ export function useUpdatePublicPageDiscount() {
       code?: string;
       percentOff?: number;
       isActive?: boolean;
+      applicableTo?: DiscountApplicableTo;
+      maxTotalUses?: number | null;
+      maxUsesPerUser?: number | null;
+      startsAt?: string | null;
+      expiresAt?: string | null;
     }) => updatePublicPageDiscount(id, dto),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: discountsKey }),
   });

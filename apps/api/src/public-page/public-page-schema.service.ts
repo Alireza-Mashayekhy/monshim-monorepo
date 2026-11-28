@@ -5,15 +5,17 @@ import { ensureEntitySchema } from 'src/common/utils/schema-guard.util';
 import { DataSource } from 'typeorm';
 
 import { PublicPageDiscount } from './entities/public-page-discount.entity';
+import { PublicPageDiscountUsage } from './entities/public-page-discount-usage.entity';
 
 /**
  * جدول‌هایی که در production با `synchronize = false` ممکن است ساخته نشده باشند
  * (چون فقط با فایل‌های `sql/` به‌صورت دستی ساخته می‌شوند).
  *
  * نمونهٔ واقعی: جدول `public_page_discounts` که اگر در دیتابیس production نبود،
- * «افزودن کد تخفیف» در پنل ادمین با خطای ۵۰۰ شکست می‌خورد.
+ * «افزودن کد تخفیف» در پنل ادمین با خطای ۵۰۰ شکست می‌خورد. جدول
+ * `discount_usages` (مصرف‌های موفق کدها) هم به همان دلیل اینجاست.
  */
-const GUARDED_ENTITIES = [PublicPageDiscount];
+const GUARDED_ENTITIES = [PublicPageDiscount, PublicPageDiscountUsage];
 
 /**
  * هنگام بالا آمدن سرویس، وجودِ جدول‌های مورد نیاز این ماژول را تضمین می‌کند.

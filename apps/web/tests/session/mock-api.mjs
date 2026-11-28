@@ -13,8 +13,12 @@ const user = () => ({
   isActive: true,
   gender: 'male',
   birthDate: '1990-01-01',
-  cityId: null,
-  provinceId: null,
+  cityId: options.homeCityRelationOnly ? null : options.homeCityId ?? null,
+  provinceId: options.homeCityId ? 1 : null,
+  city: options.homeCityId
+    ? { id: options.homeCityId, name: 'تهران', provinceId: 1 }
+    : null,
+  province: options.homeCityId ? { id: 1, name: 'تهران' } : null,
 });
 
 function send(res, status, data, headers = {}) {
@@ -129,6 +133,48 @@ http
     );
     events.push({ path, cookies: { ...cookies }, phase: 'start' });
 
+    if (options.cityScenario) {
+      if (path === '/api/locations/provinces') {
+        return send(res, 200, [{ id: 1, name: 'تهران' }]);
+      }
+      if (path === '/api/locations/provinces/1/cities') {
+        return send(res, 200, [{ id: 12, name: 'تهران', provinceId: 1 }]);
+      }
+      if (path === '/api/users/me' && req.method === 'PATCH') {
+        const body = await readBody(req);
+        events.push({ path, phase: 'body', body });
+        options.homeCityId = body.cityId;
+        return send(res, 200, user());
+      }
+      if (path === '/api/barber') {
+        const query = Object.fromEntries(
+          new URL(req.url, `http://127.0.0.1:${port}`).searchParams,
+        );
+        events.push({ path, phase: 'query', query });
+        return send(
+          res,
+          200,
+          options.homeEmpty ? [] : [{ id: 73, salonName: 'سالن شهر' }],
+        );
+      }
+    }
+
+    if (options.reviewScenario) {
+      if (path === '/api/barber/73/reviews/my') {
+        if (cookies.access_token !== 'valid') return send(res, 401, null);
+        const myReview = options.myReview ?? null;
+        const reason = myReview ? 'ALREADY_REVIEWED' : options.reviewReason ?? 'NO_BOOKING';
+        return send(res, 200, { myReview, canReview: reason === 'ELIGIBLE', eligibilityReason: reason });
+      }
+      if (path === '/api/barber/73/reviews' && req.method === 'POST') {
+        const body = await readBody(req);
+        events.push({ path, phase: 'body', body });
+        if (cookies.access_token !== 'valid' || options.reviewReason !== 'ELIGIBLE' || options.myReview) return send(res, 403, null);
+        options.myReview = { id: 'review-1', barberId: 'profile-73', rating: body.rating, comment: body.comment ?? null, status: 'pending', createdAt: new Date().toISOString() };
+        return send(res, 201, options.myReview);
+      }
+    }
+
     if (path === '/api/auth/me') {
       const status =
         options.meStatus ?? (cookies.access_token === 'valid' ? 200 : 401);
@@ -197,6 +243,13 @@ http
     if (path === '/api/auth/logout') {
       return send(res, 201, {}, { 'Set-Cookie': clearedCookies });
     }
+    if (path === '/api/admin/barber/73/slug' && req.method === 'PATCH') {
+      const body = await readBody(req);
+      const previousSlug = options.managementSlug === null ? null : (options.managementSlug ?? barber.slug);
+      options.managementSlug = body.slug;
+      events.push({ path, phase: 'body', body });
+      return send(res, 200, { userId: 73, slug: body.slug, previousSlug });
+    }
     if (path === '/api/admin/barber/management') {
       const accountActive = options.managementAccountActive ?? true;
       const visible = options.managementVisible ?? true;
@@ -211,7 +264,11 @@ http
           isActive: accountActive && visible,
           isAccountActive: accountActive,
           isAdminAccount: options.managementAdminAccount ?? false,
-          slug: barber.slug,
+          slug: options.managementSlug === null ? null : (options.managementSlug ?? barber.slug),
+          barberProfileId: 'profile-73',
+          publicUrl: options.managementSlug === null ? null : `http://127.0.0.1:43100/provider/${options.managementSlug ?? barber.slug}`,
+          publicPageSubscription: options.managementSubscriptionActive ? { display: 'active', isFreeTrial: true, startDate: '2025-01-01', endDate: '2030-01-01' } : null,
+          publicPageAvailability: options.managementSlug === null ? { status: 'NOT_SETUP', reason: 'NO_SLUG' } : { status: options.managementPageStatus ?? 'ACTIVE', reason: options.managementPageReason ?? null },
         },
       ]);
     }
@@ -243,9 +300,13 @@ http
       path === '/api/public-page/barber/salon-test' ||
       path === '/api/barber/73'
     ) {
-      return send(res, 200, barber);
+      return send(res, 200, options.reviewScenario ? { ...barber, rating: 5, reviewCount: 1 } : barber);
     }
     if (path === '/api/barber/73/reviews') {
+      if (options.reviewScenario) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ status: 200, data: [{ id: 'approved-review', rating: 5, comment: 'نظر تایید شده مشتری', status: 'approved', createdAt: '2025-01-01T00:00:00Z', customer: { fullName: 'مشتری نمونه' } }], pagination: { page: 1, limit: 10, total: 1, totalPages: 1 } }));
+      }
       return send(res, 200, []);
     }
     if (path === '/api/barber/profile/me') {

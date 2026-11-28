@@ -228,6 +228,7 @@ export const Step1Profile: React.FC<Step1ProfileProps> = ({
           >
             <ReviewsSection
               barberId={barber.userId ?? barber.id}
+              barberName={barber.salonName}
               rating={ratingValue}
               reviewCount={reviewCount}
               initialReviews={initialReviews}

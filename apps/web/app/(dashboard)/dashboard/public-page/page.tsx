@@ -21,6 +21,10 @@ import DashboardShell from '@/components/dashboard/layout/dashboard-shell';
 import { PublicPageExplainer } from '@/components/dashboard/public-page/public-page-explainer';
 import AppCard from '@/components/shared/app-card';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
+import {
+  AppliedDiscount,
+  DiscountCodeBox,
+} from '@/components/shared/discount-code-box';
 import FadeIn from '@/components/shared/fade-in';
 import PageHeader from '@/components/shared/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -106,6 +110,9 @@ export default function PublicPagePage() {
   const [copied, setCopied] = useState(false);
   const [slugDraft, setSlugDraft] = useState('');
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  /** کد تخفیف اعمال‌شده روی پلن‌های خرید صفحهٔ اختصاصی (ستون کناری گرید) */
+  const [appliedDiscount, setAppliedDiscount] =
+    useState<AppliedDiscount | null>(null);
 
   const { data: statusData, isLoading, isError, refetch } =
     useMyPublicPageStatus();
@@ -255,14 +262,43 @@ export default function PublicPagePage() {
       <FadeIn>
         <div className="mt-4 space-y-4">
           {/*
-            توضیح کامل «صفحهٔ اختصاصی چیست و چه خواصی دارد».
-            پیش‌تر فقط یک جملهٔ کوتاه بالای پلن‌ها بود و آرایشگر درک روشنی از
-            ارزش این صفحه و تفاوت پلن‌ها نداشت.
+            اشتراک منقضی‌شده — بالاترین بخش بعد از هدر تا آرایشگر سریع متوجه
+            شود صفحه‌اش از دسترس عموم خارج شده است. تاریخ پایان واقعی را
+            نشان می‌دهیم، نه یک وضعیت خالی.
           */}
-          <PublicPageExplainer
-            publicUrl={publicUrl || undefined}
-            isActive={isActive}
-          />
+          {!isActive && lastSubscription && (
+            <AppCard>
+              <div className="flex items-start gap-3">
+                <TriangleAlert
+                  size={22}
+                  className="mt-0.5 shrink-0 text-amber-600"
+                />
+                <div>
+                  <h2 className="text-base font-black text-gray-900">
+                    اشتراک صفحهٔ اختصاصی شما منقضی شده است
+                  </h2>
+                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                    اشتراک «{lastSubscription.planName}»
+                    {lastSubscription.isFreeTrial ? ' (دورهٔ رایگان)' : ''} در
+                    تاریخ{' '}
+                    {toPersianDigits(
+                      new Date(lastSubscription.endDate).toLocaleDateString(
+                        'fa-IR',
+                      ),
+                    )}{' '}
+                    پایان یافت. تا زمانی که اشتراک جدید فعال نشود، صفحهٔ اختصاصی
+                    شما در دسترس عموم نیست و در Providers و Sitemap نمایش داده
+                    نمی‌شود.
+                  </p>
+                  <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                    برای فعال‌سازی دوباره، یکی از پلن‌های زیر را انتخاب کنید؛
+                    اسلاگ، آدرس و همهٔ محتوای قبلی محفوظ است و چیزی از نو ساخته
+                    نمی‌شود.
+                  </p>
+                </div>
+              </div>
+            </AppCard>
+          )}
 
           <AppCard>
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -517,38 +553,6 @@ export default function PublicPagePage() {
               )}
           </AppCard>
 
-          {/* اشتراک منقضی‌شده: تاریخ پایان واقعی را نشان دهیم، نه یک وضعیت خالی */}
-          {!isActive && lastSubscription && (
-            <AppCard>
-              <div className="flex items-start gap-3">
-                <TriangleAlert size={22} className="mt-0.5 shrink-0 text-amber-600" />
-                <div>
-                  <h2 className="text-base font-black text-gray-900">
-                    اشتراک صفحهٔ اختصاصی شما منقضی شده است
-                  </h2>
-                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                    اشتراک «{lastSubscription.planName}»
-                    {lastSubscription.isFreeTrial ? ' (دورهٔ رایگان)' : ''} در
-                    تاریخ{' '}
-                    {toPersianDigits(
-                      new Date(lastSubscription.endDate).toLocaleDateString(
-                        'fa-IR',
-                      ),
-                    )}{' '}
-                    پایان یافت. تا زمانی که اشتراک جدید فعال نشود، صفحهٔ اختصاصی
-                    شما در دسترس عموم نیست و در Providers و Sitemap نمایش داده
-                    نمی‌شود.
-                  </p>
-                  <p className="mt-2 text-xs leading-6 text-muted-foreground">
-                    برای فعال‌سازی دوباره، یکی از پلن‌های زیر را انتخاب کنید؛
-                    اسلاگ، آدرس و همهٔ محتوای قبلی محفوظ است و چیزی از نو
-                    ساخته نمی‌شود.
-                  </p>
-                </div>
-              </div>
-            </AppCard>
-          )}
-
           {/* وضعیت اشتراک «پروفایل اختصاصی» (دورهٔ رایگان یا پلن تمدید پولی) */}
           {subscription && (
             <AppCard>
@@ -607,83 +611,151 @@ export default function PublicPagePage() {
             </AppCard>
           )}
 
-          {/* پلن‌های تمدید اشتراک پروفایل اختصاصی */}
-          {showRenewalPlans && (
-            <AppCard>
-              <h2 className="text-base font-black text-gray-900">
-                {isActive
-                  ? 'تمدید اشتراک پروفایل اختصاصی'
-                  : 'فعال‌سازی اشتراک پروفایل اختصاصی'}
-              </h2>
+          {/*
+            پلن‌های تمدید و مدیریت کد تخفیف کنار هم در انتهای صفحه (گرید دوستونه).
+            بخش «مدیریت کد تخفیف» طبق پرامپت دوم به‌عنوان ستون دوم همین گرید
+            (درست بعد از کارت پلن‌ها) اضافه می‌شود.
+          */}
+          <div className="grid grid-cols-1 lg:grid-cols-2">
+            {/* پلن‌های تمدید اشتراک پروفایل اختصاصی */}
+            {showRenewalPlans && (
+              <AppCard>
+                <h2 className="text-base font-black text-gray-900">
+                  {isActive
+                    ? 'تمدید اشتراک پروفایل اختصاصی'
+                    : 'فعال‌سازی اشتراک پروفایل اختصاصی'}
+                </h2>
 
-              <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                {isActive
-                  ? 'برای اینکه صفحه‌تان بدون وقفه در دسترس بماند، یکی از پلن‌های زیر را انتخاب کنید. قیمت‌ها به‌صورت قطعی از سامانه خوانده می‌شوند و پس از پرداخت موفق، مدت اعتبار به زمان باقی‌ماندهٔ شما «اضافه» می‌شود (نه اینکه از نو شروع شود)؛ پس با تمدید زودهنگام چیزی از دست نمی‌دهید.'
-                  : 'صفحهٔ اختصاصی شما در حال حاضر غیرفعال است و مشتری‌ها آن را نمی‌بینند. با انتخاب یکی از پلن‌های زیر، صفحه بلافاصله فعال می‌شود؛ اسلاگ، آدرس و همهٔ محتوای قبلی محفوظ است و نیازی به ساختن صفحه از نو نیست.'}
-              </p>
+                <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                  {isActive
+                    ? 'برای اینکه صفحه‌تان بدون وقفه در دسترس بماند، یکی از پلن‌های زیر را انتخاب کنید. قیمت‌ها به‌صورت قطعی از سامانه خوانده می‌شوند و پس از پرداخت موفق، مدت اعتبار به زمان باقی‌ماندهٔ شما «اضافه» می‌شود (نه اینکه از نو شروع شود)؛ پس با تمدید زودهنگام چیزی از دست نمی‌دهید.'
+                    : 'صفحهٔ اختصاصی شما در حال حاضر غیرفعال است و مشتری‌ها آن را نمی‌بینند. با انتخاب یکی از پلن‌های زیر، صفحه بلافاصله فعال می‌شود؛ اسلاگ، آدرس و همهٔ محتوای قبلی محفوظ است و نیازی به ساختن صفحه از نو نیست.'}
+                </p>
 
-              <ul className="mt-3 grid gap-1.5 text-[11px] leading-6 text-muted-foreground sm:grid-cols-2">
-                <li className="flex items-start gap-1.5">
-                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
-                  پرداخت یک‌باره، بدون تمدید خودکار و بدون کسر ماهانه
-                </li>
-                <li className="flex items-start gap-1.5">
-                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
-                  آدرس و اسلاگ ثبت‌شده در گوگل دست‌نخورده می‌ماند
-                </li>
-                <li className="flex items-start gap-1.5">
-                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
-                  همهٔ امتیازها، نظرات و نمونه‌کارها حفظ می‌شود
-                </li>
-                <li className="flex items-start gap-1.5">
-                  <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
-                  با پایان اعتبار، خرید خودکار انجام نمی‌شود
-                </li>
-              </ul>
+                <ul className="mt-3 grid gap-1.5 text-[11px] leading-6 text-muted-foreground sm:grid-cols-2">
+                  <li className="flex items-start gap-1.5">
+                    <Check
+                      size={13}
+                      className="mt-1 shrink-0 text-emerald-600"
+                    />
+                    پرداخت یک‌باره، بدون تمدید خودکار و بدون کسر ماهانه
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <Check
+                      size={13}
+                      className="mt-1 shrink-0 text-emerald-600"
+                    />
+                    آدرس و اسلاگ ثبت‌شده در گوگل دست‌نخورده می‌ماند
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <Check
+                      size={13}
+                      className="mt-1 shrink-0 text-emerald-600"
+                    />
+                    همهٔ امتیازها، نظرات و نمونه‌کارها حفظ می‌شود
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <Check
+                      size={13}
+                      className="mt-1 shrink-0 text-emerald-600"
+                    />
+                    با پایان اعتبار، خرید خودکار انجام نمی‌شود
+                  </li>
+                </ul>
 
-              {isLoadingPlans ? (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <Skeleton className="h-32" />
-                  <Skeleton className="h-32" />
-                </div>
-              ) : (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {plans.map(plan => (
-                    <div
-                      key={plan.id}
-                      className="flex flex-col rounded-2xl border border-gray-200 bg-gray-50/60 p-4"
-                    >
-                      <h3 className="text-sm font-black text-gray-900">
-                        {plan.name}
-                      </h3>
-                      <p className="mt-2 text-2xl font-black text-primary">
-                        {formatFaNumber(plan.price)}
-                        <span className="mr-1 text-xs font-medium text-muted-foreground">
-                          تومان
-                        </span>
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {toPersianDigits(plan.durationDays)} روز دسترسی
-                      </p>
-                      <Button
-                        size="sm"
-                        className="mt-4 w-full"
-                        disabled={payPublicPage.isPending}
-                        onClick={() =>
-                          payPublicPage.mutate({ planId: plan.id })
-                        }
+                {isLoadingPlans ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <Skeleton className="h-32" />
+                    <Skeleton className="h-32" />
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {plans.map(plan => {
+                      const quote = appliedDiscount?.quotes[plan.id];
+                      return (
+                      <div
+                        key={plan.id}
+                        className="flex flex-col rounded-2xl border border-gray-200 bg-gray-50/60 p-4"
                       >
-                        {payPublicPage.isPending ? (
-                          <Loader2 size={15} className="animate-spin" />
-                        ) : null}
-                        انتخاب و پرداخت
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </AppCard>
-          )}
+                        <h3 className="text-sm font-black text-gray-900">
+                          {plan.name}
+                        </h3>
+                        {quote ? (
+                          <>
+                            <p className="mt-2 text-sm font-medium text-gray-400 line-through">
+                              {formatFaNumber(
+                                quote.originalAmount,
+                              )}
+                              <span className="mr-1 text-xs">تومان</span>
+                            </p>
+                            <p className="mt-1 text-2xl font-black text-primary">
+                              {formatFaNumber(
+                                quote.amount,
+                              )}
+                              <span className="mr-1 text-xs font-medium text-muted-foreground">
+                                تومان
+                              </span>
+                            </p>
+                            <span className="mt-1.5 inline-flex w-fit rounded-full bg-primary px-2 py-0.5 text-[10px] font-black text-white">
+                              {toPersianDigits(
+                                quote.percentOff,
+                              )}
+                              ٪ تخفیف
+                            </span>
+                          </>
+                        ) : (
+                          <p className="mt-2 text-2xl font-black text-primary">
+                            {formatFaNumber(plan.price)}
+                            <span className="mr-1 text-xs font-medium text-muted-foreground">
+                              تومان
+                            </span>
+                          </p>
+                        )}
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {toPersianDigits(plan.durationDays)} روز دسترسی
+                        </p>
+                        <Button
+                          size="sm"
+                          className="mt-4 w-full"
+                          disabled={payPublicPage.isPending}
+                          onClick={() =>
+                            payPublicPage.mutate({
+                              planId: plan.id,
+                              discountCode: appliedDiscount?.code,
+                            })
+                          }
+                        >
+                          {payPublicPage.isPending ? (
+                            <Loader2 size={15} className="animate-spin" />
+                          ) : null}
+                          انتخاب و پرداخت
+                        </Button>
+                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </AppCard>
+            )}
+
+            {/* ستون دوم گرید: باکس کد تخفیف — کنار بخش پلن‌های تمدید */}
+            <DiscountCodeBox
+              target="PUBLIC_PAGE"
+              plans={plans}
+              applied={appliedDiscount}
+              onAppliedChange={setAppliedDiscount}
+            />
+          </div>
+
+          {/*
+            توضیح کامل «صفحهٔ اختصاصی چیست و چه خواصی دارد» — به انتهای صفحه
+            منتقل شده تا بخش‌های عملیاتی (وضعیت، لینک، اسلاگ، اشتراک و پلن‌ها)
+            اول دیده شوند.
+          */}
+          <PublicPageExplainer
+            publicUrl={publicUrl || undefined}
+            isActive={isActive}
+          />
         </div>
       </FadeIn>
     </DashboardShell>

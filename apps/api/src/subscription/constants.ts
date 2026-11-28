@@ -17,6 +17,23 @@ export type SubscriptionPlanType = (typeof SUBSCRIPTION_PLAN_TYPES)[number];
 export const SMS_PLAN_TYPE: SubscriptionPlanType = 'sms';
 export const PUBLIC_PAGE_PLAN_TYPE: SubscriptionPlanType = 'public_page';
 
+export const SMS_TRIAL_PLAN_KEY = 'sms_trial';
+export const SMS_PURCHASE_PLAN_KEYS = [
+  'starter',
+  'basic',
+  'growth',
+  'pro',
+  'premium',
+] as const;
+
+export function isSmsPurchasePlanKey(
+  planKey: string | null | undefined,
+): boolean {
+  return (
+    !!planKey && (SMS_PURCHASE_PLAN_KEYS as readonly string[]).includes(planKey)
+  );
+}
+
 export interface SubscriptionPlanDefinition {
   planKey: string;
   name: string;
@@ -29,6 +46,16 @@ export interface SubscriptionPlanDefinition {
 }
 
 export const SUBSCRIPTION_PLANS: SubscriptionPlanDefinition[] = [
+  {
+    planKey: SMS_TRIAL_PLAN_KEY,
+    name: 'اشتراک هدیهٔ خوش‌آمدگویی',
+    smsCount: 50,
+    price: 0,
+    durationDays: PLAN_DURATION_DAYS,
+    description: 'هدیهٔ یک‌ماههٔ عضویت در منشیم شامل ۵۰ پیامک رایگان.',
+    sortOrder: 0,
+    planType: SMS_PLAN_TYPE,
+  },
   {
     planKey: 'starter',
     name: 'پلن آغاز',

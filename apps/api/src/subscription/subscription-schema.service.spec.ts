@@ -62,6 +62,11 @@ describe('SubscriptionSchemaService (sms_usages guard)', () => {
   function setup() {
     const source = {
       options: { type: 'mysql' },
+      query: jest
+        .fn()
+        .mockResolvedValue([
+          { columnType: "enum('active','reserved','expired','canceled')" },
+        ]),
     } as unknown as DataSource;
     return new SubscriptionSchemaService(source);
   }
@@ -88,6 +93,38 @@ describe('SubscriptionSchemaService (sms_usages guard)', () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it('alters the old enum once, then leaves an upgraded enum untouched', async () => {
+    let type = "enum('active','expired','canceled')";
+    const query = jest.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT')) return [{ columnType: type }];
+      type = "enum('active','reserved','expired','canceled')";
+      return [];
+    });
+    const service = new SubscriptionSchemaService({
+      query,
+    } as unknown as DataSource);
+    await service.onApplicationBootstrap();
+    await service.onApplicationBootstrap();
+    expect(
+      query.mock.calls.filter(([sql]) => sql.startsWith('ALTER')),
+    ).toHaveLength(1);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("ENUM('active','reserved','expired','canceled')"),
+    );
+  });
+
+  it('does not discard unknown custom enum values', async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValue([
+        { columnType: "enum('active','expired','canceled','custom')" },
+      ]);
+    await new SubscriptionSchemaService({
+      query,
+    } as unknown as DataSource).onApplicationBootstrap();
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('does not touch the database when ENABLE_SCHEMA_MUTATIONS is off', async () => {

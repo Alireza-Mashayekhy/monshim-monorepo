@@ -76,9 +76,19 @@ export interface PublicPageStatus {
   lastSubscription?: PublicPageSubscriptionStatus | null;
 }
 
+/**
+ * پاسخ استعلام/اعتبارسنجی کد تخفیف برای **یک پلنِ مشخص**.
+ *
+ * همهٔ اعداد (قیمت اصلی، مبلغ تخفیف، مبلغ نهایی) در بک‌اند از خودِ پلن
+ * دیتابیس محاسبه می‌شوند؛ فرانت فقط `code`/`target`/`planId` می‌فرستد.
+ */
 export interface PublicPageDiscountQuote {
-  code: string | null;
+  discountId: string;
+  code: string;
   percentOff: number;
+  applicableTo: 'PUBLIC_PAGE' | 'SUBSCRIPTION' | 'BOTH';
+  planId: string;
+  target: 'PUBLIC_PAGE' | 'SUBSCRIPTION';
   originalAmount: number;
   discountAmount: number;
   amount: number;

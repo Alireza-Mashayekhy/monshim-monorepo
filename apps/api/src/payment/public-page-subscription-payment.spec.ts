@@ -15,13 +15,20 @@ import { PaymentService } from './payment.service';
 describe('PaymentService — پرداخت اشتراک پروفایل اختصاصی', () => {
   const profile = { id: 'profile-1', userId: 7, salonName: 'سالن تست' };
 
-  function buildHarness(options?: { plan?: any; planFound?: boolean }) {
+  function buildHarness(options?: {
+    plan?: any;
+    planFound?: boolean;
+    /** نتیجهٔ موفق `getDiscountQuote` برای تست مسیر کد تخفیف */
+    discountQuote?: any;
+  }) {
     const savedPayments: any[] = [];
     const paymentRepo = {
       create: jest.fn((value: any) => ({ ...value })),
       save: jest.fn(async (value: any) => {
-        savedPayments.push(value);
-        return value;
+        // مشابه DB: رکورد ذخیره‌شده شناسه دارد (برای ثبت مصرف کد تخفیف).
+        const saved = { id: `pay-${savedPayments.length + 1}`, ...value };
+        savedPayments.push(saved);
+        return saved;
       }),
     };
     const userRepo = {
@@ -34,6 +41,10 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
       getStatusByUserId: jest
         .fn()
         .mockResolvedValue({ isActive: false, reason: null }),
+      getDiscountQuote: jest
+        .fn()
+        .mockResolvedValue(options?.discountQuote ?? null),
+      recordDiscountUsage: jest.fn().mockResolvedValue(true),
     };
     const subscriptionService = {
       findPublicPagePurchasePlan: jest
@@ -231,5 +242,212 @@ describe('PaymentService — پرداخت اشتراک پروفایل اختصا
       userSubscriptionService.activateSubscriptionAfterPayment,
     ).not.toHaveBeenCalled();
     expect(publicPageService.getStatusByUserId).not.toHaveBeenCalled();
+  });
+
+  describe('کد تخفیف خرید صفحهٔ اختصاصی', () => {
+    const plan = {
+      id: 'plan-monthly',
+      planKey: 'public_page_monthly',
+      price: 99_000,
+      durationDays: 30,
+    };
+
+    it('کد تخفیف مبلغ نهایی را کم می‌کند، در metadata ثبت می‌شود و سهمیه نمی‌سوزد', async () => {
+      const { service, savedPayments, publicPageService } = buildHarness({
+        plan,
+        discountQuote: {
+          discountId: 'disc-1',
+          code: 'SAVE25',
+          percentOff: 25,
+          applicableTo: 'PUBLIC_PAGE',
+          planId: 'plan-monthly',
+          target: 'PUBLIC_PAGE',
+          originalAmount: 99_000,
+          discountAmount: 24_750,
+          amount: 74_250,
+        },
+      });
+
+      const result = await service.initiatePublicPagePayment(
+        7,
+        null,
+        'plan-monthly',
+        'SAVE25',
+      );
+
+      expect(publicPageService.getDiscountQuote).toHaveBeenCalledWith({
+        userId: 7,
+        code: 'SAVE25',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      });
+      expect(result).toMatchObject({
+        amount: 74_250,
+        originalAmount: 99_000,
+        discountAmount: 24_750,
+        discountPercent: 25,
+        discountCode: 'SAVE25',
+      });
+      expect(savedPayments[0].amount).toBe(74_250);
+      expect(JSON.parse(savedPayments[0].metadata)).toEqual({
+        subscriptionPlanId: 'plan-monthly',
+        discount: {
+          id: 'disc-1',
+          code: 'SAVE25',
+          percentOff: 25,
+          amount: 24_750,
+        },
+      });
+      // سهمیه فقط هنگام «پرداخت موفق» سوزانده می‌شود، نه هنگام آغاز پرداخت.
+      expect(publicPageService.recordDiscountUsage).not.toHaveBeenCalled();
+    });
+
+    it('کد ۱۰۰٪: بدون درگاه، پرداخت PAID، اشتراک فعال و مصرف کد همان لحظه ثبت می‌شود', async () => {
+      const {
+        service,
+        savedPayments,
+        publicPageService,
+        userSubscriptionService,
+      } = buildHarness({
+        plan,
+        discountQuote: {
+          discountId: 'disc-free',
+          code: 'FREE100',
+          percentOff: 100,
+          applicableTo: 'BOTH',
+          planId: 'plan-monthly',
+          target: 'PUBLIC_PAGE',
+          originalAmount: 99_000,
+          discountAmount: 99_000,
+          amount: 0,
+        },
+      });
+      (service as any).requestZibalPayment = jest.fn();
+
+      const result = await service.initiatePublicPagePayment(
+        7,
+        null,
+        'plan-monthly',
+        'FREE100',
+      );
+
+      expect(result).toMatchObject({
+        free: true,
+        amount: 0,
+        discountCode: 'FREE100',
+        discountAmount: 99_000,
+        discountPercent: 100,
+      });
+      expect((service as any).requestZibalPayment).not.toHaveBeenCalled();
+      expect(savedPayments[0]).toMatchObject({
+        status: PaymentStatus.PAID,
+        amount: 0,
+      });
+      expect(
+        userSubscriptionService.activateSubscriptionAfterPayment,
+      ).toHaveBeenCalledWith(7, 'plan-monthly');
+      expect(publicPageService.recordDiscountUsage).toHaveBeenCalledWith({
+        discountId: 'disc-free',
+        userId: 7,
+        paymentId: 'pay-1',
+        purpose: 'PUBLIC_PAGE',
+        discountAmount: 99_000,
+      });
+    });
+
+    it('مبلغ نهاییِ کمتر از حداقل مجاز درگاه با خطای فارسی رد می‌شود', async () => {
+      const { service, savedPayments } = buildHarness({
+        plan: { ...plan, id: 'plan-cheap', price: 500 },
+        discountQuote: {
+          discountId: 'disc-90',
+          code: 'OFF90',
+          percentOff: 90,
+          applicableTo: 'BOTH',
+          planId: 'plan-cheap',
+          target: 'PUBLIC_PAGE',
+          originalAmount: 500,
+          discountAmount: 450,
+          amount: 50,
+        },
+      });
+
+      await expect(
+        service.initiatePublicPagePayment(7, null, 'plan-cheap', 'OFF90'),
+      ).rejects.toThrow(/حداقل مجاز درگاه/);
+      expect(savedPayments).toHaveLength(0);
+    });
+
+    it.each([
+      'زمان استفاده از این کد تخفیف هنوز شروع نشده است',
+      'مهلت استفاده از این کد تخفیف به پایان رسیده است',
+    ])(
+      'propagates validity error without creating payment: %s',
+      async message => {
+        const { service, savedPayments, publicPageService } = buildHarness({
+          plan: plan,
+        });
+        publicPageService.getDiscountQuote.mockRejectedValueOnce(
+          new Error(message),
+        );
+        await expect(
+          service.initiatePublicPagePayment(7, null, 'plan-monthly', 'RANGE'),
+        ).rejects.toThrow(message);
+        expect(savedPayments).toHaveLength(0);
+      },
+    );
+
+    it('کد نامعتبر (خطای اعتبارسنجی بک‌اند) پرداختی نمی‌سازد', async () => {
+      const { service, savedPayments, publicPageService } = buildHarness({
+        plan,
+      });
+      publicPageService.getDiscountQuote.mockRejectedValueOnce(
+        new Error('این کد تخفیف منقضی شده است'),
+      );
+
+      await expect(
+        service.initiatePublicPagePayment(7, null, 'plan-monthly', 'OLD20'),
+      ).rejects.toThrow('این کد تخفیف منقضی شده است');
+      expect(savedPayments).toHaveLength(0);
+    });
+
+    it('پرداخت موفقِ دارای کد، مصرف کد را هنگام تسویه ثبت می‌کند', async () => {
+      const { service, publicPageService } = buildHarness({ plan });
+
+      await (service as any).fulfillPayment({
+        id: 'pay-9',
+        userId: 7,
+        purpose: PaymentPurpose.PUBLIC_PAGE,
+        metadata: JSON.stringify({
+          subscriptionPlanId: 'plan-monthly',
+          discount: {
+            id: 'disc-1',
+            code: 'SAVE25',
+            percentOff: 25,
+            amount: 24_750,
+          },
+        }),
+      });
+
+      expect(publicPageService.recordDiscountUsage).toHaveBeenCalledWith({
+        discountId: 'disc-1',
+        userId: 7,
+        paymentId: 'pay-9',
+        purpose: 'PUBLIC_PAGE',
+        discountAmount: 24_750,
+      });
+    });
+
+    it('پرداخت بدون کد تخفیف، مصرفی ثبت نمی‌کند', async () => {
+      const { service, publicPageService } = buildHarness({ plan });
+
+      await (service as any).fulfillPayment({
+        id: 'pay-10',
+        userId: 7,
+        purpose: PaymentPurpose.PUBLIC_PAGE,
+        metadata: JSON.stringify({ subscriptionPlanId: 'plan-monthly' }),
+      });
+
+      expect(publicPageService.recordDiscountUsage).not.toHaveBeenCalled();
+    });
   });
 });

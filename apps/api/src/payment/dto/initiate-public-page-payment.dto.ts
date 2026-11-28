@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 
 export class InitiatePublicPagePaymentDto {
   /**
@@ -9,4 +9,14 @@ export class InitiatePublicPagePaymentDto {
   @IsString()
   @IsNotEmpty()
   planId: string;
+
+  /**
+   * کد تخفیف اختیاری. فقط **کد** از فرانت می‌آید؛ اعتبارسنجی (فعال بودن،
+   * انقضا، کاربرد، سقف استفاده) و مبلغ تخفیف همگی در بک‌اند و از روی همان
+   * پلن محاسبه می‌شوند. سهمیهٔ کد فقط هنگام «پرداخت موفق» می‌سوزد.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-zA-Z0-9_-]{3,32}$/)
+  discountCode?: string;
 }

@@ -1,4 +1,5 @@
 import { PublicPageDiscount } from 'src/public-page/entities/public-page-discount.entity';
+import { PublicPageDiscountUsage } from 'src/public-page/entities/public-page-discount-usage.entity';
 import { DataSource, Table, TableColumn } from 'typeorm';
 /**
  * `ConnectionMetadataBuilder` همان چیزی است که خودِ TypeORM هنگام `initialize`
@@ -34,14 +35,14 @@ function createQueryRunnerStub(existingTable?: Table) {
 }
 
 /** متادیتای واقعی entity بدون نیاز به دیتابیس (driver: MySQL یعنی production) */
-async function buildPublicPageDiscountMetadata() {
+async function buildEntityMetadata(entity: any) {
   const dataSource = new DataSource({
     type: 'mysql',
-    entities: [PublicPageDiscount],
+    entities: [entity],
   });
   const [metadata] = await new ConnectionMetadataBuilder(
     dataSource,
-  ).buildEntityMetadatas([PublicPageDiscount]);
+  ).buildEntityMetadatas([entity]);
   return { metadata, driver: dataSource.driver };
 }
 
@@ -113,7 +114,7 @@ describe('schema guard (ساخت idempotent جدول جامانده)', () => {
   });
 
   it('جدولِ entity واقعی را با همان ستون‌ها و کلید یکتای code می‌سازد', async () => {
-    const { metadata, driver } = await buildPublicPageDiscountMetadata();
+    const { metadata, driver } = await buildEntityMetadata(PublicPageDiscount);
     const runner = createQueryRunnerStub(undefined);
     const dataSource = {
       getMetadata: () => metadata,
@@ -129,16 +130,59 @@ describe('schema guard (ساخت idempotent جدول جامانده)', () => {
     const table = runner.createTable.mock.calls[0][0] as Table;
     expect(table.name).toBe('public_page_discounts');
     expect(table.columns.map(column => column.name).sort()).toEqual([
+      'applicable_to',
       'code',
       'created_at',
+      'expires_at',
       'id',
       'is_active',
+      'max_total_uses',
+      'max_uses_per_user',
       'percent_off',
+      'starts_at',
       'updated_at',
+      'used_count',
     ]);
     expect(
       table.indices.some(
         index => index.isUnique && index.columnNames.includes('code'),
+      ),
+    ).toBe(true);
+  });
+
+  it('جدولِ مصرف کدها (discount_usages) با payment_id یکتا ساخته می‌شود', async () => {
+    const { metadata, driver } = await buildEntityMetadata(
+      PublicPageDiscountUsage,
+    );
+    const runner = createQueryRunnerStub(undefined);
+    const dataSource = {
+      getMetadata: () => metadata,
+      driver,
+      createQueryRunner: () => runner,
+    } as unknown as DataSource;
+
+    const report = await ensureEntitySchema(
+      dataSource,
+      PublicPageDiscountUsage,
+    );
+
+    expect(report.created).toBe(true);
+
+    const table = runner.createTable.mock.calls[0][0] as Table;
+    expect(table.name).toBe('discount_usages');
+    expect(table.columns.map(column => column.name).sort()).toEqual([
+      'created_at',
+      'discount_amount',
+      'discount_id',
+      'id',
+      'payment_id',
+      'purpose',
+      'user_id',
+    ]);
+    // `payment_id` یکتا تا تسویهٔ تکراری یک پرداخت، مصرف جدید نسازد.
+    expect(
+      table.indices.some(
+        index => index.isUnique && index.columnNames.includes('payment_id'),
       ),
     ).toBe(true);
   });

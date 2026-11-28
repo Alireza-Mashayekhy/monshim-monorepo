@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node --import ./tests/register-resolver.mjs --test lib/digits.test.ts lib/barber-gender.test.ts components/dashboard/layout/routes.test.ts lib/auth.test.ts lib/route-access.test.ts lib/profile-quality.test.ts lib/analytics.test.ts lib/tel.test.ts lib/seo.test.ts app/sitemap.test.ts lib/reminder.test.ts lib/order-pricing.test.ts lib/pricing-parity.test.ts lib/text-parity.test.ts lib/session-policy.test.ts lib/upload-image-files.test.ts lib/pwa/platform.test.ts lib/blog/types.test.ts lib/subscription.test.ts services/api/client.test.mjs services/api/session-coordination.test.ts services/api/session-refresh.test.ts",
+    "test": "node --import ./tests/register-resolver.mjs --test lib/birth-date.test.ts lib/digits.test.ts lib/barber-gender.test.ts components/dashboard/layout/routes.test.ts lib/auth.test.ts lib/route-access.test.ts lib/profile-quality.test.ts lib/analytics.test.ts lib/tel.test.ts lib/seo.test.ts app/sitemap.test.ts lib/reminder.test.ts lib/order-pricing.test.ts lib/pricing-parity.test.ts lib/text-parity.test.ts lib/session-policy.test.ts lib/upload-image-files.test.ts lib/pwa/platform.test.ts lib/blog/types.test.ts lib/subscription.test.ts services/api/client.test.mjs services/api/session-coordination.test.ts services/api/session-refresh.test.ts",
     "test:session-refresh": "node --test services/api/session-refresh.test.ts",
     "test:session": "node --test services/api/client.test.mjs services/api/session-refresh.test.ts services/api/session-coordination.test.ts lib/session-policy.test.ts",
     "test:session:e2e": "node tests/session/run-e2e.mjs",
@@ -48,6 +48,7 @@
     "input-otp": "1.5.0",
     "jalaali-js": "2.0.1",
     "jose": "6.2.12",
+    "leaflet": "^1.9.4",
     "lucide-react": "1.52.0",
     "next": "16.2.6",
     "nextjs-toploader": "3.9.17",
@@ -59,6 +60,7 @@
     "react-dropzone": "15.0.0",
     "react-hook-form": "7.89.0",
     "react-intersection-observer": "10.1.0",
+    "react-leaflet": "^5.0.0",
     "react-multi-date-picker": "4.5.2",
     "shadcn": "4.21.3",
     "sharp": "0.35.5",
@@ -70,8 +72,11 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@monshim/eslint-config": "workspace:*",
+    "@monshim/tsconfig": "workspace:*",
     "@playwright/test": "1.56.1",
     "@tailwindcss/postcss": "4.3.3",
+    "@types/leaflet": "^1.9.23",
     "@types/node": "20.19.43",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -80,8 +85,6 @@
     "eslint-config-next": "16.2.6",
     "postcss": "8.5.29",
     "tailwindcss": "4.3.3",
-    "typescript": "5.9.3",
-    "@monshim/tsconfig": "workspace:*",
-    "@monshim/eslint-config": "workspace:*"
+    "typescript": "5.9.3"
   }
 }

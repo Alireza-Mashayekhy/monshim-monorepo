@@ -24,7 +24,7 @@ export function TicketCard({ ticket, onSelect, className }: TicketCardProps) {
       type="button"
       onClick={() => onSelect(ticket.id)}
       className={cn(
-        'w-full text-right bg-white rounded-2xl border border-gray-100 p-4 flex items-center gap-3 shadow-sm hover:border-primary-200 hover:shadow-md active:scale-[0.99] transition-all',
+        'w-full text-right bg-white rounded-2xl border border-gray-100 p-4 flex items-center gap-3 shadow-sm hover:border-primary/40 hover:shadow-md active:scale-[0.99] transition-all',
         className,
       )}
     >
@@ -35,7 +35,7 @@ export function TicketCard({ ticket, onSelect, className }: TicketCardProps) {
             {ticket.subject}
           </span>
           {unread > 0 && (
-            <span className="shrink-0 min-w-5 h-5 px-1.5 rounded-full bg-primary-600 text-white text-[10px] font-bold flex items-center justify-center">
+            <span className="shrink-0 min-w-5 h-5 px-1.5 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center">
               {unread > 99 ? '۹۹+' : unread}
             </span>
           )}

@@ -37,11 +37,21 @@ export async function checkPublicPageSlug(slug: string) {
   return data;
 }
 
-/** بررسی کد تخفیف و محاسبهٔ قیمت خرید صفحهٔ عمومی */
-export async function quotePublicPageDiscount(code: string) {
+/**
+ * استعلام/اعتبارسنجی کد تخفیف برای یک پلنِ مشخص.
+ *
+ * `target` مشخص می‌کند کد برای خرید صفحهٔ اختصاصی (`PUBLIC_PAGE`) است یا
+ * اشتراک پیامکی (`SUBSCRIPTION`)؛ قیمت واقعی پلن و سقف‌های استفاده در
+ * بک‌اند از روی دیتابیس سنجیده می‌شود.
+ */
+export async function quotePublicPageDiscount(params: {
+  code: string;
+  target: 'PUBLIC_PAGE' | 'SUBSCRIPTION';
+  planId: string;
+}) {
   const { data } = await api.post<ApiSingleResponse<PublicPageDiscountQuote>>(
     endpoints.publicPage.discountQuote,
-    { code },
+    params,
   );
   return data;
 }

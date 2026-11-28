@@ -31,3 +31,20 @@ export const REFERRAL_PUBLIC_PAGE_DISCOUNT_PERCENT = 50;
  *                      انتقالی یا پلن تمدید پولی) که تا پایان مدت اعتبار فعال است.
  */
 export type PublicPageActivationReason = 'SUBSCRIPTION';
+
+/**
+ * دامنهٔ «کاربرد» کد تخفیف (`applicable_to`) — کدام خرید(ها) مشمول کدند:
+ *   • `PUBLIC_PAGE`  — فقط خرید/تمدید صفحهٔ اختصاصی (پیش‌فرض؛ رفتار کدهای قدیمی)
+ *   • `SUBSCRIPTION` — فقط خرید اشتراک پیامکی
+ *   • `BOTH`        — هر دو
+ */
+export const DISCOUNT_APPLICABLE_TO = [
+  'PUBLIC_PAGE',
+  'SUBSCRIPTION',
+  'BOTH',
+] as const;
+export type DiscountApplicableTo = (typeof DISCOUNT_APPLICABLE_TO)[number];
+
+/** هدفِ استعلام/پرداخت با کد تخفیف — `BOTH` در این دامنه نیست. */
+export const DISCOUNT_TARGETS = ['PUBLIC_PAGE', 'SUBSCRIPTION'] as const;
+export type DiscountTarget = (typeof DISCOUNT_TARGETS)[number];

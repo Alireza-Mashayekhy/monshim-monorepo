@@ -247,7 +247,7 @@ export function AdminTicketChat({ ticketId, onBack }: AdminTicketChatProps) {
               onKeyDown={handleKeyDown}
               rows={1}
               placeholder="پاسخ خود را بنویسید..."
-              className="min-h-10 max-h-40 rounded-2xl resize-none bg-gray-50 border-gray-200"
+              className="min-h-10 max-h-40 rounded-2xl resize-none bg-gray-50 border-gray-200 text-gray-900 placeholder:text-gray-400"
             />
             <Button
               type="button"
@@ -282,7 +282,7 @@ export function AdminTicketChat({ ticketId, onBack }: AdminTicketChatProps) {
             <AlertDialogAction
               onClick={handleClose}
               disabled={closeTicket.isPending}
-              className="bg-primary-600 text-white hover:bg-primary-700"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {closeTicket.isPending ? (
                 <Loader2 size={16} className="animate-spin" />

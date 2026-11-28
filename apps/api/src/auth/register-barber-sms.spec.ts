@@ -57,6 +57,10 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
         subscription: { id: 'sub-trial-1' },
         created: true,
       }),
+      grantFreeSmsTrial: jest.fn().mockResolvedValue({
+        subscription: { id: 'sms-trial' },
+        created: true,
+      }),
       claimFreeTrialSms: jest.fn().mockResolvedValue(true),
     };
     const dataSource: any = {
@@ -147,6 +151,25 @@ describe('AuthService.registerBarber — پیامک «پروفایل در حال
     expect(
       userSubscriptionService.grantFreePublicPageTrial,
     ).toHaveBeenCalledWith(42, expect.anything());
+    expect(userSubscriptionService.grantFreeSmsTrial).toHaveBeenCalledTimes(1);
+    expect(userSubscriptionService.grantFreeSmsTrial).toHaveBeenCalledWith(
+      42,
+      userSubscriptionService.grantFreePublicPageTrial.mock.calls[0][1],
+    );
+  });
+
+  it('خطای اعطای هدیهٔ پیامکی ثبت‌نام را ناموفق می‌کند', async () => {
+    const { service, response, userSubscriptionService, bookingSmsService } =
+      buildHarness();
+    userSubscriptionService.grantFreeSmsTrial.mockRejectedValue(
+      new Error('database failure'),
+    );
+    await expect(service.registerBarber(dto, response)).rejects.toThrow(
+      'database failure',
+    );
+    expect(
+      bookingSmsService.sendPublicPageFreeTrialToBarber,
+    ).not.toHaveBeenCalled();
   });
 
   it('در صورت اعطای تازهٔ دورهٔ رایگان، پیامک فعال‌شدن برای آرایشگر ارسال می‌شود', async () => {

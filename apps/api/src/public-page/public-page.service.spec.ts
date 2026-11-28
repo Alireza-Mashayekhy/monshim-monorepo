@@ -53,21 +53,44 @@ describe('PublicPage slug utility', () => {
 });
 
 describe('PublicPageService', () => {
-  it('کد تخفیف را بدون حساسیت به بزرگی حروف اعمال و مبلغ را محاسبه می‌کند', async () => {
+  const monthlyPlan = {
+    id: 'plan-monthly',
+    planKey: 'public_page_monthly',
+    price: 99_000,
+    isActive: true,
+    planType: 'public_page',
+  };
+
+  it('کد تخفیف را بدون حساسیت به بزرگی حروف اعمال و مبلغ را از پلن دیتابیس حساب می‌کند', async () => {
     const { service } = createService({
-      discount: { code: 'SAVE25', percentOff: 25, isActive: true },
+      discount: {
+        id: 'disc-1',
+        code: 'SAVE25',
+        percentOff: 25,
+        isActive: true,
+        applicableTo: 'BOTH',
+      },
+      plans: [monthlyPlan],
     });
 
-    await expect(service.getDiscountQuote(' save25 ')).resolves.toEqual({
+    // نه قیمت پایهٔ ثابت، نه چیزی از فرانت: قیمت اصلی از خودِ پلن می‌آید.
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: ' save25 ',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      }),
+    ).resolves.toEqual({
+      discountId: 'disc-1',
       code: 'SAVE25',
       percentOff: 25,
-      originalAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
-      discountAmount: Math.round(
-        (PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS * 25) / 100,
-      ),
-      amount:
-        PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS -
-        Math.round((PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS * 25) / 100),
+      applicableTo: 'BOTH',
+      planId: 'plan-monthly',
+      target: 'PUBLIC_PAGE',
+      originalAmount: 99_000,
+      discountAmount: 24_750,
+      amount: 74_250,
     });
   });
 
@@ -98,17 +121,290 @@ describe('PublicPageService', () => {
 
   it('کد تخفیف صددرصدی خرید را رایگان می‌کند و کد نامعتبر رد می‌شود', async () => {
     const { service } = createService({
-      discount: { code: 'FREE100', percentOff: 100, isActive: true },
+      discount: {
+        id: 'disc-free',
+        code: 'FREE100',
+        percentOff: 100,
+        isActive: true,
+        applicableTo: 'BOTH',
+      },
+      plans: [monthlyPlan],
     });
-    await expect(service.getDiscountQuote('FREE100')).resolves.toMatchObject({
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: 'FREE100',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      }),
+    ).resolves.toMatchObject({
       amount: 0,
-      discountAmount: PUBLIC_PAGE_DISCOUNT_BASE_PRICE_TOMANS,
+      originalAmount: 99_000,
+      discountAmount: 99_000,
     });
 
     const { service: withoutDiscount } = createService();
-    await expect(withoutDiscount.getDiscountQuote('MISSING')).rejects.toThrow(
-      'کد تخفیف نامعتبر یا غیرفعال است',
-    );
+    await expect(
+      withoutDiscount.getDiscountQuote({
+        userId: 7,
+        code: 'MISSING',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      }),
+    ).rejects.toThrow('کد تخفیف نامعتبر یا غیرفعال است');
+  });
+
+  it('کد فقط برای هدفِ مجاز (applicable_to) پذیرفته می‌شود', async () => {
+    const { service } = createService({
+      discount: {
+        id: 'disc-page',
+        code: 'PAGEONLY',
+        percentOff: 20,
+        isActive: true,
+        applicableTo: 'PUBLIC_PAGE',
+      },
+      plans: [monthlyPlan],
+    });
+
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: 'PAGEONLY',
+        target: 'SUBSCRIPTION',
+        planId: 'plan-sms',
+      }),
+    ).rejects.toThrow('این کد تخفیف برای خرید اشتراک پیامکی معتبر نیست');
+
+    // کد «فقط صفحهٔ اختصاصی» برای هدف خودش پذیرفته می‌شود.
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: 'PAGEONLY',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      }),
+    ).resolves.toMatchObject({ amount: 79_200 });
+  });
+
+  it('کد منقضی‌شده رد می‌شود حتی اگر فعال باشد', async () => {
+    const { service } = createService({
+      discount: {
+        id: 'disc-old',
+        code: 'OLD20',
+        percentOff: 20,
+        isActive: true,
+        applicableTo: 'BOTH',
+        expiresAt: new Date(Date.now() - 86_400_000),
+      },
+      plans: [monthlyPlan],
+    });
+
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: 'OLD20',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      }),
+    ).rejects.toThrow('مهلت استفاده از این کد تخفیف به پایان رسیده است');
+  });
+
+  it.each(['PUBLIC_PAGE', 'SUBSCRIPTION'] as const)(
+    'enforces time boundaries for %s',
+    async target => {
+      const now = new Date('2027-03-21T12:00:00.000Z');
+      const clock = jest.spyOn(Date, 'now').mockReturnValue(now.getTime());
+      try {
+        const discount = {
+          id: 'range',
+          code: 'RANGE',
+          percentOff: 1,
+          isActive: true,
+          applicableTo: 'BOTH',
+          startsAt: new Date(now.getTime() + 1),
+          expiresAt: new Date(now.getTime() + 1000),
+        };
+        const plan =
+          target === 'SUBSCRIPTION'
+            ? { ...monthlyPlan, planType: 'sms' }
+            : monthlyPlan;
+        const { service } = createService({ discount, plans: [plan] });
+        const params = {
+          userId: 7,
+          code: 'RANGE',
+          target,
+          planId: 'plan-monthly',
+        };
+        await expect(service.getDiscountQuote(params)).rejects.toThrow(
+          'زمان استفاده از این کد تخفیف هنوز شروع نشده است',
+        );
+        discount.startsAt = new Date(now.getTime());
+        await expect(service.getDiscountQuote(params)).resolves.toMatchObject({
+          percentOff: 1,
+        });
+        discount.startsAt = new Date(now.getTime() - 1000);
+        discount.expiresAt = new Date(now.getTime());
+        await expect(service.getDiscountQuote(params)).resolves.toMatchObject({
+          percentOff: 1,
+        });
+        discount.expiresAt = new Date(now.getTime() - 1);
+        await expect(service.getDiscountQuote(params)).rejects.toThrow(
+          'مهلت استفاده از این کد تخفیف به پایان رسیده است',
+        );
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
+  it('سقف کلِ استفاده‌های موفق تمام‌شده رد می‌شود', async () => {
+    const { service } = createService({
+      discount: {
+        id: 'disc-limit',
+        code: 'ONCE10',
+        percentOff: 10,
+        isActive: true,
+        applicableTo: 'BOTH',
+        maxTotalUses: 10,
+      },
+      plans: [monthlyPlan],
+      usageTotal: 10,
+    });
+
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: 'ONCE10',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      }),
+    ).rejects.toThrow('سقف استفاده از این کد تخفیف تکمیل شده است');
+  });
+
+  it('سقف استفادهٔ هر کاربر تمام‌شده رد می‌شود', async () => {
+    const { service } = createService({
+      discount: {
+        id: 'disc-peruser',
+        code: 'PERUSER1',
+        percentOff: 10,
+        isActive: true,
+        applicableTo: 'BOTH',
+        maxUsesPerUser: 1,
+      },
+      plans: [monthlyPlan],
+      usageByUser: 1,
+    });
+
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: 'PERUSER1',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-monthly',
+      }),
+    ).rejects.toThrow('سقف استفاده شما از این کد تخفیف تکمیل شده است');
+  });
+
+  it('پلنِ ناموجود/نامناسبِ هدف رد می‌شود (قیمت از دیتابیس می‌آید)', async () => {
+    const { service } = createService({
+      discount: {
+        id: 'disc-1',
+        code: 'SAVE25',
+        percentOff: 25,
+        isActive: true,
+        applicableTo: 'BOTH',
+      },
+      plans: [],
+    });
+
+    await expect(
+      service.getDiscountQuote({
+        userId: 7,
+        code: 'SAVE25',
+        target: 'PUBLIC_PAGE',
+        planId: 'plan-missing',
+      }),
+    ).rejects.toThrow('پلن انتخاب‌شده معتبر نیست');
+  });
+
+  describe('recordDiscountUsage (ثبت مصرف هنگام پرداخت موفق)', () => {
+    const usageParams = {
+      discountId: 'disc-1',
+      userId: 7,
+      paymentId: 'pay-1',
+      purpose: 'PUBLIC_PAGE' as const,
+      discountAmount: 24_750,
+    };
+
+    it('ردیف مصرف ثبت و شمارندهٔ کد افزایش می‌یابد (در یک تراکنش)', async () => {
+      const { service, usageEvents } = createService({
+        lockedDiscount: {
+          id: 'disc-1',
+          code: 'SAVE25',
+          maxTotalUses: null,
+          maxUsesPerUser: null,
+        },
+      });
+
+      await expect(service.recordDiscountUsage(usageParams)).resolves.toBe(
+        true,
+      );
+
+      expect(usageEvents.inserts).toEqual([
+        {
+          discountId: 'disc-1',
+          userId: 7,
+          paymentId: 'pay-1',
+          purpose: 'PUBLIC_PAGE',
+          discountAmount: 24_750,
+        },
+      ]);
+      expect(usageEvents.updates).toHaveLength(1);
+      expect(usageEvents.updates[0].where).toEqual({ id: 'disc-1' });
+    });
+
+    it('اگر سقف کل هنگام تسویه تمام شده باشد (رَیس) مصرف ثبت نمی‌شود', async () => {
+      const { service, usageEvents } = createService({
+        lockedDiscount: {
+          id: 'disc-1',
+          code: 'SAVE25',
+          maxTotalUses: 10,
+          maxUsesPerUser: null,
+        },
+        usageTotal: 10,
+      });
+
+      await expect(service.recordDiscountUsage(usageParams)).resolves.toBe(
+        false,
+      );
+      expect(usageEvents.inserts).toHaveLength(0);
+      expect(usageEvents.updates).toHaveLength(0);
+    });
+
+    it('تسویهٔ تکراریِ یک پرداخت مصرف جدید نمی‌سازد (idempotent)', async () => {
+      const { service, usageEvents } = createService({
+        lockedDiscount: {
+          id: 'disc-1',
+          code: 'SAVE25',
+          maxTotalUses: null,
+          maxUsesPerUser: null,
+        },
+        existingUsage: { id: 'usage-1', paymentId: 'pay-1' },
+      });
+
+      await expect(service.recordDiscountUsage(usageParams)).resolves.toBe(
+        true,
+      );
+      expect(usageEvents.inserts).toHaveLength(0);
+    });
+
+    it('خطای دیتابیسِ ثبت مصرف false برمی‌گرداند تا تسویه از کار نیفتد', async () => {
+      const { service } = createService({ usageInsertError: true });
+
+      await expect(service.recordDiscountUsage(usageParams)).resolves.toBe(
+        false,
+      );
+    });
   });
 
   function createMockBookingQb(options?: { count?: number; rawRows?: any[] }) {
@@ -156,6 +452,18 @@ describe('PublicPageService', () => {
     discount?: any;
     hasReferral?: boolean;
     subscription?: any;
+    /** پلن‌های موجود برای استعلام/اعتبارسنجی کد تخفیف (قیمت از «دیتابیس») */
+    plans?: any[];
+    /** ردیفِ کد برای مسیر `recordDiscountUsage` (قفل + سقف‌ها) */
+    lockedDiscount?: any;
+    /** مصرفِ از قبل ثبت‌شدهٔ همین پرداخت (بررسی idempotency) */
+    existingUsage?: any;
+    /** تعداد کل مصرف‌های موفق (سقف کل) */
+    usageTotal?: number;
+    /** تعداد مصرف‌های موفقِ همین کاربر (سقف هر کاربر) */
+    usageByUser?: number;
+    /** درج ردیف مصرف با خطای دیتابیس شکست بخورد */
+    usageInsertError?: boolean;
     /** ردیف‌های جدول خرید قبلی پکیج (ورودی انتقال خریداران قبلی) */
     legacyPurchases?: Array<{ userId: number }>;
     /** نتیجهٔ اعطای مهلت انتقالی به ازای هر کاربر (null = پلن seed نشده) */
@@ -234,6 +542,61 @@ describe('PublicPageService', () => {
     const discountRepo: any = {
       findOne: jest.fn().mockResolvedValue(params?.discount ?? null),
     };
+    const planRepo: any = {
+      findOne: jest.fn(({ where }: any) =>
+        Promise.resolve(
+          (params?.plans ?? []).find(
+            plan =>
+              plan.id === where?.id &&
+              (where?.isActive === undefined ||
+                plan.isActive === where.isActive) &&
+              (where?.planType === undefined ||
+                plan.planType === where.planType),
+          ) ?? null,
+        ),
+      ),
+    };
+    /** رویدادهای مسیر `recordDiscountUsage` برای اطمینان از اتمیک‌بودن */
+    const usageEvents = { inserts: [] as any[], updates: [] as any[] };
+    const usageManager: any = {
+      findOne: jest.fn((entity: any) => {
+        if (entity?.name === 'PublicPageDiscountUsage') {
+          return Promise.resolve(params?.existingUsage ?? null);
+        }
+        return Promise.resolve(params?.lockedDiscount ?? null);
+      }),
+      count: jest.fn((_entity: any, options: any) => {
+        const where = options?.where ?? {};
+        return Promise.resolve(
+          (where.userId !== undefined
+            ? params?.usageByUser
+            : params?.usageTotal) ?? 0,
+        );
+      }),
+      insert: jest.fn((_entity: any, value: any) => {
+        if (params?.usageInsertError) {
+          return Promise.reject(new Error('insert failed'));
+        }
+        usageEvents.inserts.push(value);
+        return Promise.resolve({ ...value });
+      }),
+      update: jest.fn((_entity: any, where: any, value: any) => {
+        usageEvents.updates.push({ where, value });
+        return Promise.resolve({ affected: 1 });
+      }),
+    };
+    const discountUsageRepo: any = {
+      count: jest.fn((options: any) =>
+        Promise.resolve(
+          (options?.where?.userId !== undefined
+            ? params?.usageByUser
+            : params?.usageTotal) ?? 0,
+        ),
+      ),
+      manager: {
+        transaction: jest.fn(async (cb: any) => cb(usageManager)),
+      },
+    };
     const referralRepo: any = {
       count: jest.fn().mockResolvedValue(params?.hasReferral ? 1 : 0),
     };
@@ -271,6 +634,8 @@ describe('PublicPageService', () => {
       barberService,
       configService,
       userSubscriptionService as never,
+      planRepo,
+      discountUsageRepo,
     );
 
     return {
@@ -280,6 +645,9 @@ describe('PublicPageService', () => {
       purchaseRepo,
       barberService,
       userSubscriptionService,
+      discountUsageRepo,
+      usageManager,
+      usageEvents,
     };
   }
 

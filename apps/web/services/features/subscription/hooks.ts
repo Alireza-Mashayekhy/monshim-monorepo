@@ -73,7 +73,8 @@ export function useCurrentUserSubscription() {
   return useQuery({
     queryKey: subscriptionKeys.current(),
     queryFn: getCurrentUserSubscription,
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
   });
 }
 
@@ -81,9 +82,8 @@ export function useUserSubscriptions(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: subscriptionKeys.history(),
     queryFn: getUserSubscriptions,
-    staleTime: 2 * 60 * 1000,
-    // صفحهٔ اشتراک فقط وقتی اشتراک فعالی یافت نشد به سابقه نیاز دارد؛
-    // فراخوانی شرطی از درخواست اضافی جلوگیری می‌کند.
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
     enabled: options?.enabled ?? true,
   });
 }

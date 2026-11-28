@@ -124,6 +124,7 @@ describe('quick booking OTP contract over HTTP', () => {
           provide: UserSubscriptionService,
           useValue: {
             grantFreePublicPageTrial: jest.fn().mockResolvedValue(null),
+            grantFreeSmsTrial: jest.fn().mockResolvedValue(null),
             claimFreeTrialSms: jest.fn().mockResolvedValue(false),
           },
         },

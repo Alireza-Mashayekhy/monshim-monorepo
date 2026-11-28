@@ -176,6 +176,8 @@ describe('admin barber visibility and login over HTTP', () => {
         return Promise.resolve({ affected: 1 });
       }),
       createQueryBuilder: jest.fn(() => buildQueryBuilder('profiles')),
+      save: jest.fn(async value => value),
+      manager: userRepo.manager,
     };
     const service = new BarberService(
       userRepo,
@@ -231,6 +233,7 @@ describe('admin barber visibility and login over HTTP', () => {
           provide: UserSubscriptionService,
           useValue: {
             grantFreePublicPageTrial: jest.fn().mockResolvedValue(null),
+            grantFreeSmsTrial: jest.fn().mockResolvedValue(null),
             claimFreeTrialSms: jest.fn().mockResolvedValue(false),
           },
         },
@@ -530,6 +533,35 @@ describe('admin barber visibility and login over HTTP', () => {
     expect(userRepo.update).not.toHaveBeenCalled();
   });
 
+  it('allows only administrators to change a slug by user id', async () => {
+    const barberCookie = await login(phoneBarber);
+    const adminCookie = await login(phoneAdmin);
+    await request(app.getHttpServer())
+      .patch('/api/admin/barber/42/slug')
+      .set('Cookie', barberCookie)
+      .send({ slug: 'new-salon' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch('/api/admin/barber/42/slug')
+      .set('Cookie', adminCookie)
+      .send({})
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch('/api/admin/barber/42/slug')
+      .set('Cookie', adminCookie)
+      .send({ slug: 'new-salon' })
+      .expect(200);
+    expect(profile.slug).toBe('new-salon');
+    expect(webhook.notifyBarberProfileChanged).toHaveBeenCalledWith({
+      userId: 42,
+      slugs: ['salon-42'],
+    });
+    expect(webhook.notifyBarberProfileChanged).toHaveBeenCalledWith({
+      userId: 42,
+      slugs: ['new-salon'],
+    });
+  });
+
   it('management list shows the real public-page subscription (or null when none)', async () => {
     const adminCookie = await login(phoneAdmin);
 
@@ -568,6 +600,22 @@ describe('admin barber visibility and login over HTTP', () => {
       planKey: 'public_page_trial',
       isFreeTrial: true,
       display: 'active',
+    });
+    expect(withActive.body.data[0]).toMatchObject({
+      barberProfileId: 'barber-profile-42',
+      slug: 'salon-42',
+      publicPageAvailability: { status: 'ACTIVE', reason: null },
+    });
+    expect(withActive.body.data[0].publicUrl).toMatch(/\/provider\/salon-42$/);
+
+    barber.services = [];
+    const noService = await request(app.getHttpServer())
+      .get('/api/admin/barber/management')
+      .set('Cookie', adminCookie)
+      .expect(200);
+    expect(noService.body.data[0].publicPageAvailability).toEqual({
+      status: 'INACTIVE',
+      reason: 'NO_ACTIVE_SERVICE',
     });
   });
 });

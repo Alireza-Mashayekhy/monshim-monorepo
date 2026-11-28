@@ -42,6 +42,36 @@ export class SubscriptionSchemaService implements OnApplicationBootstrap {
       return;
     }
 
+    // synchronize=false in production: adding an enum member requires an explicit ALTER.
+    try {
+      const columns = await this.dataSource.query(
+        `SELECT COLUMN_TYPE AS columnType FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subscriptions' AND COLUMN_NAME = 'status'`,
+      );
+      const type = columns[0]?.columnType;
+      if (!type) throw new Error('user_subscriptions.status not found');
+      if (!/'reserved'/i.test(type)) {
+        // Avoid silently discarding custom enum values when modifying the column.
+        const values = [...type.matchAll(/'([^']+)'/g)].map(match => match[1]);
+        if (
+          !/^enum\(/i.test(type) ||
+          values.some(
+            value => !['active', 'expired', 'canceled'].includes(value),
+          )
+        ) {
+          throw new Error(`unexpected status type: ${type}`);
+        }
+        await this.dataSource.query(
+          `ALTER TABLE user_subscriptions MODIFY COLUMN status ENUM('active','reserved','expired','canceled') NOT NULL DEFAULT 'active'`,
+        );
+        this.logger.log('مقدار reserved به وضعیت اشتراک اضافه شد');
+      }
+    } catch (error) {
+      this.logger.error(
+        `ارتقای enum اشتراک ناموفق بود؛ پیش از استفاده فایل sql/user-subscription-reserved.sql را اجرا کنید: ${String(error)}`,
+      );
+    }
+
     for (const entity of GUARDED_ENTITIES) {
       try {
         const report = await ensureEntitySchema(this.dataSource, entity);

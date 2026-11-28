@@ -7,10 +7,11 @@
  * ثبت رزرو دستی همه یک نتیجه ببینند. این فایل فقط نمایش را از رکوردهای واقعی
  * دیتابیس می‌سازد؛ هیچ دادهٔ ساختگی یا محاسبهٔ فرانت‌اندی در کار نیست.
  *
- * قاعدهٔ تشخیص «فعال»: وضعیت `ACTIVE` **و** داخل بازهٔ startDate تا endDate.
+ * قاعدهٔ تشخیص «فعال»: وضعیت `ACTIVE`، بازهٔ معتبر و سهمیهٔ تمام‌نشده.
  * صرفِ `active` بودنِ ستون status معنای معتبر بودن نیست — تاریخ هم باید
  * بررسی شود (همان قاعدهٔ `getCurrent`).
  */
+import { SMS_TRIAL_PLAN_KEY } from './constants';
 import {
   UserSubscription,
   UserSubscriptionStatus,
@@ -20,22 +21,24 @@ import {
  * وضعیت نمایشیِ اشتراک پیامکی:
  *
  * `active`: وضعیت ACTIVE و داخل بازهٔ startDate تا endDate.
- * `scheduled`: وضعیت ACTIVE اما startDate هنوز نرسیده (تمدید صف‌شده).
+ * `scheduled`: وضعیت ACTIVE اما startDate هنوز نرسیده (تمدید قدیمی).
+ * `reserved`: در صف، بدون تاریخ شروع واقعی.
  * `expired`: منقضی‌شده یا بسته‌شده با انقضای خودکار.
  * `canceled`: لغوشده (هرگز معتبر تلقی نمی‌شود حتی اگر داخل بازه باشد).
  */
 export type SmsSubscriptionDisplayStatus =
-  'active' | 'scheduled' | 'expired' | 'canceled';
+  'active' | 'scheduled' | 'reserved' | 'expired' | 'canceled';
 
 export interface SmsSubscriptionSummary {
   id: string;
   planId: string;
   planKey: string | null;
   planName: string;
+  isFreeTrial: boolean;
   price: number;
   startDate: string;
   endDate: string;
-  /** وضعیت خام دیتابیس (`active` | `expired` | `canceled`). */
+  /** وضعیت خام دیتابیس. */
   status: string;
   /** وضعیت نمایشیِ مشتق از بازهٔ زمانی + وضعیت خام. */
   display: SmsSubscriptionDisplayStatus;
@@ -47,6 +50,7 @@ export interface SmsSubscriptionSummary {
   smsRemaining: number;
   /** درصد مصرف سهمیه (۰ تا ۱۰۰؛ وقتی سهمیه صفر است ۰). */
   usagePercent: number;
+  reservedCount: number;
 }
 
 function toDateSafe(value: Date | string | null | undefined): Date {
@@ -65,7 +69,8 @@ function toCountSafe(value: unknown): number {
  * (status + بازهٔ زمانی) — برای پلن پیامکی هیچ مسیر دیگری نباید تعریف کند.
  */
 export function isSmsSubscriptionInWindow(
-  subscription: Pick<UserSubscription, 'status' | 'startDate' | 'endDate'>,
+  subscription: Pick<UserSubscription, 'status' | 'startDate' | 'endDate'> &
+    Partial<Pick<UserSubscription, 'smsTotal' | 'smsUsed'>>,
   now: Date,
 ): boolean {
   const start = toDateSafe(subscription.startDate);
@@ -73,7 +78,11 @@ export function isSmsSubscriptionInWindow(
   return (
     subscription.status === UserSubscriptionStatus.ACTIVE &&
     start <= now &&
-    now < end
+    now < end &&
+    !(
+      toCountSafe(subscription.smsTotal) > 0 &&
+      toCountSafe(subscription.smsUsed) >= toCountSafe(subscription.smsTotal)
+    )
   );
 }
 
@@ -92,7 +101,15 @@ export function summarizeSmsSubscriptions(
   if (valid.length === 0) return null;
 
   const active = valid.filter(row => isSmsSubscriptionInWindow(row, now));
-  const chosen = (active.length > 0 ? active : valid)
+  const nonReserved = valid.filter(
+    row => row.status !== UserSubscriptionStatus.RESERVED,
+  );
+  const reserved = valid.filter(
+    row => row.status === UserSubscriptionStatus.RESERVED,
+  );
+  const chosen = (
+    active.length > 0 ? active : nonReserved.length > 0 ? nonReserved : reserved
+  )
     .slice()
     .sort(
       (a, b) =>
@@ -103,13 +120,15 @@ export function summarizeSmsSubscriptions(
   const end = toDateSafe(chosen.endDate);
 
   const display: SmsSubscriptionDisplayStatus =
-    chosen.status === UserSubscriptionStatus.CANCELED
-      ? 'canceled'
-      : active.length > 0 && isSmsSubscriptionInWindow(chosen, now)
-        ? 'active'
-        : chosen.status === UserSubscriptionStatus.ACTIVE && start > now
-          ? 'scheduled'
-          : 'expired';
+    chosen.status === UserSubscriptionStatus.RESERVED
+      ? 'reserved'
+      : chosen.status === UserSubscriptionStatus.CANCELED
+        ? 'canceled'
+        : active.length > 0 && isSmsSubscriptionInWindow(chosen, now)
+          ? 'active'
+          : chosen.status === UserSubscriptionStatus.ACTIVE && start > now
+            ? 'scheduled'
+            : 'expired';
 
   const smsTotal = Math.max(0, Math.round(toCountSafe(chosen.smsTotal)));
   const smsUsed = Math.max(0, Math.round(toCountSafe(chosen.smsUsed)));
@@ -119,11 +138,13 @@ export function summarizeSmsSubscriptions(
     planId: String(chosen.subscriptionPlanId),
     planKey: chosen.subscriptionPlan?.planKey ?? null,
     planName: chosen.subscriptionPlan?.name ?? '',
+    isFreeTrial: chosen.subscriptionPlan?.planKey === SMS_TRIAL_PLAN_KEY,
     price: Number(chosen.price ?? 0),
     startDate: start.toISOString(),
     endDate: end.toISOString(),
     status: String(chosen.status),
     display,
+    reservedCount: reserved.length,
     smsTotal,
     smsUsed,
     smsRemaining: Math.max(0, smsTotal - smsUsed),

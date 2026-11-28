@@ -23,11 +23,15 @@ import {
   resolvePublicOrigin,
 } from 'src/common/utils/public-url.util';
 import { BookingSmsService } from 'src/notification/booking-sms.service';
+import { DiscountTarget } from 'src/public-page/constants';
 import { PublicPageService } from 'src/public-page/public-page.service';
 import { ReferralService } from 'src/referral/referral.service';
 import { Service } from 'src/services/entities/service.entity';
 import { SiteSettings } from 'src/settings/entities/setting.entity';
-import { SMS_PLAN_TYPE } from 'src/subscription/constants';
+import {
+  isSmsPurchasePlanKey,
+  SMS_PLAN_TYPE,
+} from 'src/subscription/constants';
 import { SubscriptionPlan } from 'src/subscription/entities/subscription-plan.entity';
 import { SubscriptionService } from 'src/subscription/subscription.service';
 import { UserSubscriptionService } from 'src/subscription/user-subscription.service';
@@ -64,6 +68,14 @@ import {
 
 /** مدت نگه‌داشتن موقت ساعت هنگام رفتن به درگاه (دقیقه) */
 const DEFAULT_SLOT_HOLD_MINUTES = 30;
+
+/**
+ * حداقل مبلغ قابل پرداخت در درگاه زیبال: ۱٬۰۰۰ ریال = ۱۰۰ تومان.
+ * اگر کد تخفیف مبلغ نهایی را بین ۱ تا این حد آورد (پلنِ ارزان با درصد
+ * بالا)، پیش از فراخوانی درگاه با خطای فارسی رد می‌شود تا خطا از سمت
+ * زیبال برنگردد و کاربر سردرگم نشود.
+ */
+const ZIBAL_MIN_AMOUNT_TOMANS = 100;
 
 @Injectable()
 export class PaymentService {
@@ -398,29 +410,121 @@ export class PaymentService {
     if (!plan) {
       throw new NotFoundException('پلن اشتراک یافت نشد یا غیرفعال است');
     }
+    // The zero-price welcome gift is granted only by registration, never by
+    // payment. A 100% discount on an eligible paid plan remains valid.
+    if (
+      !isSmsPurchasePlanKey(plan.planKey) ||
+      !Number.isFinite(Number(plan.price)) ||
+      Number(plan.price) <= 0
+    ) {
+      throw new BadRequestException('این پلن پیامکی قابل خرید نیست');
+    }
+
+    /**
+     * کد تخفیف اختیاری: فقط **کد** از فرانت می‌آید؛ اعتبارسنجی (فعال/منقضی
+     * نبودن، کاربرد، سقف استفاده) و مبلغ تخفیف از پلنِ دیتابیس محاسبه
+     * می‌شود. سهمیهٔ کد هنگام «پرداخت موفق» می‌سوزد، نه اینجا (PENDING).
+     */
+    const originalAmount = Number(plan.price);
+    const discountQuote = dto.discountCode
+      ? await this.publicPageService.getDiscountQuote({
+          userId,
+          code: dto.discountCode,
+          target: 'SUBSCRIPTION',
+          planId: plan.id,
+        })
+      : null;
+    const amount = discountQuote ? discountQuote.amount : originalAmount;
+    const discountMetadata = discountQuote
+      ? {
+          discount: {
+            id: discountQuote.discountId,
+            code: discountQuote.code,
+            percentOff: discountQuote.percentOff,
+            amount: discountQuote.discountAmount,
+          },
+        }
+      : null;
 
     const orderId = `SUB-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    /**
+     * پرداخت رایگان (تخفیف ۱۰۰٪ یا پلن رایگان): بدون درگاه، اشتراک همان
+     * لحظه فعال می‌شود، پرداخت با وضعیت PAID ذخیره و مصرف کد نیز همان لحظه
+     * (در یک تراکنش اتمیک) ثبت می‌گردد.
+     */
+    if (amount === 0) {
+      await this.userSubscriptionService.activateSubscriptionAfterPayment(
+        userId,
+        plan.id,
+      );
+
+      const savedPayment = await this.paymentRepo.save(
+        this.paymentRepo.create({
+          userId,
+          amount: 0,
+          trackId: null,
+          orderId,
+          purpose: PaymentPurpose.SUBSCRIPTION,
+          purposeId: plan.id,
+          status: PaymentStatus.PAID,
+          description: `خرید اشتراک ${plan.name}`,
+          metadata: discountMetadata ? JSON.stringify(discountMetadata) : null,
+          paidAt: new Date(),
+        }),
+      );
+
+      if (discountQuote) {
+        await this.publicPageService.recordDiscountUsage({
+          discountId: discountQuote.discountId,
+          userId,
+          paymentId: savedPayment.id ?? null,
+          purpose: 'SUBSCRIPTION',
+          discountAmount: discountQuote.discountAmount,
+        });
+      }
+
+      return {
+        free: true,
+        amount: 0,
+        orderId,
+        planName: plan.name,
+        originalAmount,
+        discountAmount: discountQuote?.discountAmount ?? 0,
+        discountPercent: discountQuote?.percentOff ?? 0,
+        discountCode: discountQuote?.code ?? null,
+      };
+    }
+
+    if (amount < ZIBAL_MIN_AMOUNT_TOMANS) {
+      throw new BadRequestException(
+        `مبلغ قابل پرداخت پس از تخفیف (${amount} تومان) کمتر از حداقل مجاز درگاه است؛ کد تخفیف دیگری استفاده کنید یا بدون کد پرداخت کنید`,
+      );
+    }
+
     const appUrl = this.getAppUrl(requestOrigin);
     const callbackUrl = `${appUrl}/api/payment/callback`;
 
     const { trackId, paymentUrl } = await this.requestZibalPayment({
-      amountTomans: Number(plan.price),
+      amountTomans: amount,
       callbackUrl,
       description: `خرید اشتراک ${plan.name} - منشیم`,
       orderId,
       mobile: user.phone,
     });
 
-    // ایجاد رکورد پرداخت
+    // ایجاد رکورد پرداخت (اطلاعات کد تخفیف در metadata تا هنگام تسویه
+    // برای ثبتِ مصرف استفاده شود؛ سهمیه همین‌جا شمرده **نمی‌شود**.)
     const payment = this.paymentRepo.create({
       userId,
-      amount: plan.price,
+      amount,
       trackId,
       orderId,
       purpose: PaymentPurpose.SUBSCRIPTION,
       purposeId: plan.id,
       status: PaymentStatus.PENDING,
       description: `خرید اشتراک ${plan.name}`,
+      metadata: discountMetadata ? JSON.stringify(discountMetadata) : null,
     });
 
     await this.paymentRepo.save(payment);
@@ -429,8 +533,12 @@ export class PaymentService {
       trackId,
       paymentUrl,
       orderId,
-      amount: plan.price,
+      amount,
       planName: plan.name,
+      originalAmount,
+      discountAmount: discountQuote?.discountAmount ?? 0,
+      discountPercent: discountQuote?.percentOff ?? 0,
+      discountCode: discountQuote?.code ?? null,
     };
   }
 
@@ -451,6 +559,7 @@ export class PaymentService {
     userId: number,
     requestOrigin?: string | null,
     planId?: string,
+    discountCode?: string,
   ) {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) {
@@ -477,18 +586,51 @@ export class PaymentService {
 
     const quote = {
       code: null as string | null,
+      discountId: null as string | null,
       percentOff: 0,
       originalAmount: Number(subscriptionPlan.price),
       discountAmount: 0,
       amount: Number(subscriptionPlan.price),
     };
 
+    /**
+     * کد تخفیف اختیاری: فقط **کد** از فرانت می‌آید؛ اعتبارسنجی و مبلغ
+     * تخفیف از پلنِ دیتابیس محاسبه می‌شود. سهمیهٔ کد هنگام «پرداخت موفق»
+     * می‌سوزد، نه اینجا (PENDING).
+     */
+    if (discountCode) {
+      const discountQuote = await this.publicPageService.getDiscountQuote({
+        userId,
+        code: discountCode,
+        target: 'PUBLIC_PAGE',
+        planId: subscriptionPlan.id,
+      });
+      quote.code = discountQuote.code;
+      quote.discountId = discountQuote.discountId;
+      quote.percentOff = discountQuote.percentOff;
+      quote.originalAmount = discountQuote.originalAmount;
+      quote.discountAmount = discountQuote.discountAmount;
+      quote.amount = discountQuote.amount;
+    }
+
+    const discountMetadata = quote.discountId
+      ? {
+          discount: {
+            id: quote.discountId,
+            code: quote.code,
+            percentOff: quote.percentOff,
+            amount: quote.discountAmount,
+          },
+        }
+      : null;
+
     const orderId = `PAGE-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const description = `خرید اشتراک پروفایل اختصاصی آرایشگاه (${profile.salonName})`;
 
     /**
-     * پرداخت رایگان: اگر پلن قیمتی نداشته باشد (پیش‌فرض وجود ندارد) همان
-     * مسیر فعال‌سازی اشتراک را می‌گیریم تا نیازی به درگاه نباشد.
+     * پرداخت رایگان: اگر پلن قیمتی نداشته باشد یا کد تخفیف ۱۰۰٪ اعمال
+     * شده باشد، بدون درگاه همان مسیر فعال‌سازی اشتراک را می‌گیریم؛ پرداخت
+     * PAID ذخیره و مصرف کد همان لحظه (اتمیک) ثبت می‌شود.
      */
     if (quote.amount === 0) {
       await this.userSubscriptionService.activateSubscriptionAfterPayment(
@@ -496,7 +638,7 @@ export class PaymentService {
         subscriptionPlan.id,
       );
 
-      await this.paymentRepo.save(
+      const savedPayment = await this.paymentRepo.save(
         this.paymentRepo.create({
           userId,
           amount: 0,
@@ -506,18 +648,42 @@ export class PaymentService {
           purposeId: profile.id,
           status: PaymentStatus.PAID,
           description,
-          metadata: JSON.stringify({ subscriptionPlanId: subscriptionPlan.id }),
+          metadata: JSON.stringify({
+            subscriptionPlanId: subscriptionPlan.id,
+            ...(discountMetadata
+              ? { discount: discountMetadata.discount }
+              : {}),
+          }),
           paidAt: new Date(),
         }),
       );
+
+      if (quote.discountId) {
+        await this.publicPageService.recordDiscountUsage({
+          discountId: quote.discountId,
+          userId,
+          paymentId: savedPayment.id ?? null,
+          purpose: 'PUBLIC_PAGE',
+          discountAmount: quote.discountAmount,
+        });
+      }
 
       return {
         free: true,
         amount: 0,
         orderId,
-        discountCode: null,
+        originalAmount: quote.originalAmount,
+        discountAmount: quote.discountAmount,
+        discountPercent: quote.percentOff,
+        discountCode: quote.code,
         planId: subscriptionPlan.id,
       };
+    }
+
+    if (quote.amount < ZIBAL_MIN_AMOUNT_TOMANS) {
+      throw new BadRequestException(
+        `مبلغ قابل پرداخت پس از تخفیف (${quote.amount} تومان) کمتر از حداقل مجاز درگاه است؛ کد تخفیف دیگری استفاده کنید یا بدون کد پرداخت کنید`,
+      );
     }
 
     const appUrl = this.getAppUrl(requestOrigin);
@@ -540,7 +706,10 @@ export class PaymentService {
       purposeId: profile.id,
       status: PaymentStatus.PENDING,
       description,
-      metadata: JSON.stringify({ subscriptionPlanId: subscriptionPlan.id }),
+      metadata: JSON.stringify({
+        subscriptionPlanId: subscriptionPlan.id,
+        ...(discountMetadata ? { discount: discountMetadata.discount } : {}),
+      }),
     });
 
     await this.paymentRepo.save(payment);
@@ -551,9 +720,9 @@ export class PaymentService {
       orderId,
       amount: quote.amount,
       originalAmount: quote.originalAmount,
-      discountAmount: 0,
-      discountPercent: 0,
-      discountCode: null,
+      discountAmount: quote.discountAmount,
+      discountPercent: quote.percentOff,
+      discountCode: quote.code,
       planId: subscriptionPlan.id,
     };
   }
@@ -1584,11 +1753,49 @@ export class PaymentService {
     }
   }
 
+  /**
+   * ثبت مصرف کد تخفیفِ این پرداخت — فقط اگر در metadata کدی باشد.
+   *
+   * در «پرداخت موفق» (تسویه) صدا زده می‌شود، نه هنگام آغاز پرداخت، تا
+   * رفتن کاربر به درگاه و بستن صفحهٔ زیبال، سهمیهٔ کد را نسوزاند. ثبت
+   * داخل تراکنش و با قفل ردیف کد انجام می‌شود (رَیس دو پرداخت هم‌زمان
+   * پوشش داده می‌شود) و خطای آن هرگز تسویه/فعال‌سازی پرداخت را از کار
+   * نمی‌اندازد.
+   */
+  private async recordPaymentDiscountUsage(
+    payment: Payment,
+    purpose: DiscountTarget,
+  ): Promise<void> {
+    try {
+      const metadata = payment.metadata
+        ? typeof payment.metadata === 'string'
+          ? JSON.parse(payment.metadata)
+          : payment.metadata
+        : null;
+      const discount = metadata?.discount;
+      if (!discount?.id) return;
+
+      await this.publicPageService.recordDiscountUsage({
+        discountId: discount.id,
+        userId: payment.userId,
+        paymentId: payment.id ?? null,
+        purpose,
+        discountAmount: Number(discount.amount ?? 0),
+      });
+    } catch (error) {
+      this.logger.error(
+        `ثبت مصرف کد تخفیف برای پرداخت ${payment.id ?? '-'} ناموفق بود: ${String(error)}`,
+      );
+    }
+  }
+
   /** اجرای عملیات وابسته به هدف پرداخت */
   private async fulfillPayment(
     payment: Payment,
   ): Promise<{ refunded: boolean }> {
     if (payment.purpose === PaymentPurpose.SUBSCRIPTION && payment.purposeId) {
+      await this.recordPaymentDiscountUsage(payment, 'SUBSCRIPTION');
+
       /**
        * فعال‌سازی اشتراک از یک منبع واحد عبور می‌کند (`UserSubscriptionService`)؛
        * همان منطق دورهٔ تمدید/انتقال اعتبار پیامکی و نوع پلن. پیش از این
@@ -1641,6 +1848,8 @@ export class PaymentService {
     }
 
     if (payment.purpose === PaymentPurpose.PUBLIC_PAGE) {
+      await this.recordPaymentDiscountUsage(payment, 'PUBLIC_PAGE');
+
       const subscriptionPlanId = this.extractSubscriptionPlanId(payment);
 
       if (subscriptionPlanId) {

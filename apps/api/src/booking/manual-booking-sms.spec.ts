@@ -98,7 +98,9 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
         const remaining =
           currentSubscription.smsTotal - currentSubscription.smsUsed;
         if (remaining < count) {
-          throw new BadRequestException('اعتبار پیامک کافی نیست');
+          throw new BadRequestException(
+            `اعتبار پیامک کافی نیست (پیامک باقی‌مانده: ${remaining})`,
+          );
         }
         currentSubscription.smsUsed += count;
       },
@@ -388,7 +390,7 @@ describe('BookingsService.createManualByBarber (Deposit Link + SMS Reminder)', (
       }),
     ).rejects.toThrow(/اعتبار پیامک کافی نیست.*پیامک باقی‌مانده: 1/);
 
-    expect(userSubscriptionService.deductSms).not.toHaveBeenCalled();
+    expect(userSubscriptionService.deductSms).toHaveBeenCalledTimes(1);
   });
 
   it('does not consume SMS quota when saving bookings fails (rollback)', async () => {

@@ -58,8 +58,8 @@ export function TicketList({
   if (!tickets || tickets.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center text-center py-14 px-6 bg-white rounded-2xl border border-dashed border-gray-200">
-        <div className="size-14 rounded-full bg-primary-50 flex items-center justify-center mb-3">
-          <Headphones size={26} className="text-primary-600" />
+        <div className="size-14 rounded-full bg-primary-2 flex items-center justify-center mb-3">
+          <Headphones size={26} className="text-primary" />
         </div>
         <p className="font-bold text-gray-700 text-sm">
           {filtered

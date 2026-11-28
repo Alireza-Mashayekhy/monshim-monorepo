@@ -11,6 +11,7 @@ import {
 
 export enum UserSubscriptionStatus {
   ACTIVE = 'active',
+  RESERVED = 'reserved',
   EXPIRED = 'expired',
   CANCELED = 'canceled',
 }
